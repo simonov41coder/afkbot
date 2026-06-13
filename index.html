@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MineGens Control Center</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1e1e2e; }
+        ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #585b70; }
+    </style>
+</head>
+<body class="bg-[#11111b] text-[#cdd6f4] font-sans antialiased min-h-screen flex flex-col">
+
+    <header class="bg-[#181825] border-b border-[#313244] px-6 py-4 shadow-md flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="bg-gradient-to-tr from-emerald-500 to-teal-500 p-2.5 rounded-xl shadow-lg shadow-emerald-500/10">
+                <i class="fa-solid fa-terminal text-xl text-[#11111b]"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold tracking-wide text-[#f5e0dc]">MineGens Center</h1>
+                <p class="text-xs text-[#a6adc8] flex items-center gap-1.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    External Remote Instance Active
+                </p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4 text-sm text-[#a6adc8]">
+            <span class="bg-[#313244] px-3 py-1.5 rounded-lg border border-[#45475a] flex items-center gap-2">
+                <i class="fa-solid fa-server text-teal-400"></i> Server Mode
+            </span>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <div class="lg:col-span-1 flex flex-col space-y-6">
+            <div class="bg-[#181825] border border-[#313244] rounded-2xl p-5 shadow-xl">
+                <h2 class="text-sm font-semibold tracking-wider text-[#cba6f7] uppercase mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-robot"></i> Automated Node Workers
+                </h2>
+                <div id="bot-roster" class="space-y-3">
+                    <div class="animate-pulse flex items-center justify-between p-3 bg-[#1e1e2e] rounded-xl border border-[#313244]">
+                        <div class="h-4 bg-[#45475a] rounded w-24"></div>
+                        <div class="h-6 bg-[#45475a] rounded-full w-16"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="lg:col-span-2 flex flex-col bg-[#181825] border border-[#313244] rounded-2xl shadow-xl overflow-hidden min-h-[500px]">
+            
+            <div class="bg-[#1e1e2e] border-b border-[#313244] px-5 py-3.5 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="inline-block w-3 h-3 rounded-full bg-[#f38ba8]"></span>
+                    <span class="inline-block w-3 h-3 rounded-full bg-[#f9e2af]"></span>
+                    <span class="inline-block w-3 h-3 rounded-full bg-[#a6e3a1]"></span>
+                    <span class="text-xs font-mono text-[#a6adc8] ml-2 tracking-tight">live_terminal_stream.log</span>
+                </div>
+                <button onclick="clearConsoleLog()" class="text-xs bg-[#313244] hover:bg-[#45475a] text-[#cdd6f4] py-1 px-2.5 rounded border border-[#45475a] transition cursor-pointer flex items-center gap-1.5">
+                    <i class="fa-solid fa-trash-can text-[#f38ba8]"></i> Clear Output
+                </button>
+            </div>
+
+            <div id="console-stream" class="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-1.5 bg-[#11111b] border-b border-[#313244] leading-relaxed">
+                <div class="text-[#6c7086] italic">[System] Establishing asynchronous data stream channel hook...</div>
+            </div>
+
+            <div class="p-4 bg-[#1e1e2e] flex flex-col md:flex-row gap-3">
+                <div class="relative w-full md:w-48">
+                    <select id="command-target" class="w-full bg-[#11111b] text-[#cdd6f4] border border-[#313244] rounded-xl py-2.5 pl-3 pr-8 text-xs font-medium focus:outline-none focus:border-[#cba6f7] appearance-none cursor-pointer">
+                        <option value="all">⚡ Broadcast (All Bots)</option>
+                    </select>
+                    <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-[#a6adc8]">
+                        <i class="fa-solid fa-chevron-down text-[10px]"></i>
+                    </div>
+                </div>
+                
+                <form id="shell-form" class="flex-1 flex gap-2" onsubmit="dispatchShellCommand(event)">
+                    <div class="relative flex-1">
+                        <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-[#6c7086]">
+                            <i class="fa-solid fa-terminal text-xs"></i>
+                        </div>
+                        <input id="shell-input" type="text" autocomplete="off" placeholder="Type an in-game command or chat string here..." class="w-full bg-[#11111b] text-[#cdd6f4] border border-[#313244] rounded-xl py-2.5 pl-9 pr-4 text-xs focus:outline-none focus:border-[#cba6f7] placeholder-[#585b70]" />
+                    </div>
+                    <button type="submit" class="bg-gradient-to-r from-[#cba6f7] to-[#89b4fa] hover:brightness-110 text-[#11111b] px-5 rounded-xl font-bold text-xs shadow-md shadow-blue-500/5 transition cursor-pointer flex items-center gap-1.5">
+                        Send <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                    </button>
+                </form>
+            </div>
+
+        </div>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+
+        const rosterEl = document.getElementById('bot-roster');
+        const consoleEl = document.getElementById('console-stream');
+        const targetSelect = document.getElementById('command-target');
+        const shellInput = document.getElementById('shell-input');
+
+        socket.on('sync-bot-list', (botNames) => {
+            targetSelect.innerHTML = '<option value="all">⚡ Broadcast (All Bots)</option>';
+            rosterEl.innerHTML = '';
+
+            botNames.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = `🤖 ${name}`;
+                targetSelect.appendChild(opt);
+
+                const row = document.createElement('div');
+                row.id = `roster-bot-${name}`;
+                row.className = "flex items-center justify-between p-3.5 bg-[#1e1e2e] border border-[#313244] rounded-xl transition hover:border-[#45475a]";
+                row.innerHTML = `
+                    <div class="flex items-center space-x-3">
+                        <div class="w-8 h-8 rounded-lg bg-[#313244] flex items-center justify-center border border-[#45475a]">
+                            <i class="fa-solid fa-user-astronaut text-sm text-[#b4befe]"></i>
+                        </div>
+                        <span class="font-semibold text-sm tracking-wide text-[#cdd6f4]">${name}</span>
+                    </div>
+                    <span id="badge-bot-${name}" class="text-[10px] font-bold px-2.5 py-1 rounded-full border bg-[#313244] border-[#45475a] text-[#a6adc8]">
+                        Connecting
+                    </span>
+                `;
+                rosterEl.appendChild(row);
+            });
+        });
+
+        socket.on('bot-status', (data) => {
+            const { username, status } = data;
+            const badge = document.getElementById(`badge-bot-${username}`);
+            if (!badge) return;
+
+            if (status === 'Online') {
+                badge.className = "text-[10px] font-bold px-2.5 py-1 rounded-full border bg-emerald-500/10 border-emerald-500/30 text-emerald-400 flex items-center gap-1 shadow-inner";
+                badge.innerHTML = `<span class="w-1 h-1 rounded-full bg-emerald-400 inline-block animate-pulse"></span> Online`;
+            } else {
+                badge.className = "text-[10px] font-bold px-2.5 py-1 rounded-full border bg-rose-500/10 border-rose-500/30 text-rose-400 flex items-center gap-1";
+                badge.innerHTML = `<span class="w-1 h-1 rounded-full bg-rose-400 inline-block"></span> Offline`;
+            }
+        });
+
+        socket.on('chat-message', (data) => {
+            const { time, username, message } = data;
+            
+            const row = document.createElement('div');
+            row.className = "hover:bg-[#1e1e2e]/40 py-0.5 px-1 rounded transition flex items-start space-x-2";
+
+            let textStyles = "text-[#cdd6f4]";
+            if (message.includes('🟢') || message.includes('✅') || message.includes('📤 [OUTGOING]')) textStyles = "text-emerald-400 font-medium";
+            if (message.includes('🔴') || message.includes('❌') || message.includes('🚨')) textStyles = "text-rose-400 font-medium";
+            if (message.includes('⚠️') || message.includes('📥')) textStyles = "text-amber-400";
+            if (message.includes('[Nav Scheduler]') || message.includes('📦')) textStyles = "text-sky-400";
+
+            row.innerHTML = `
+                <span class="text-[#585b70] shrink-0 font-light selection:bg-none">${time}</span>
+                <span class="text-[#cba6f7] font-semibold shrink-0 select-all">[${username}]</span>
+                <span class="${textStyles} break-all select-text">${escapeHtml(message)}</span>
+            `;
+
+            consoleEl.appendChild(row);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        });
+
+        function dispatchShellCommand(e) {
+            e.preventDefault();
+            const command = shellInput.value.trim();
+            if (!command) return;
+
+            const target = targetSelect.value;
+            socket.emit('send-command', { target, command });
+            shellInput.value = '';
+        }
+
+        function clearConsoleLog() {
+            consoleEl.innerHTML = '<div class="text-[#6c7086] italic">[System] Console output buffer memory flushed cleanly. Waiting for changes...</div>';
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>
+

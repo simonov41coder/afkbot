@@ -10,7 +10,6 @@ const CONFIG = {
     port: 25565,                     
     version: '1.20.1',               
     
-    // Reverted back to your preferred names list
     botNames: ['SuperSusu', 'HiroHito', 'Yatta_'],
 
     hotbarSlot: 0,       
@@ -29,6 +28,13 @@ let isProcessingQueue = false;
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
+
+// 🔧 HOISTED LOGGER FUNCTION (Moved up to prevent ReferenceErrors)
+function logCombined(username, message) {
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[${timestamp}] [${username}] ${message}`);
+    io.emit('chat-message', { time: timestamp, username, message });
+}
 
 function generatePasswordFromUsername(username) {
     let hash = 0;
@@ -160,7 +166,6 @@ function createBot(username) {
                 heldItem.name.includes('book')
             );
 
-            // FIX: Only send commands if a lobby item is actually detected
             if (lobbyItemFound || holdingLobbyItem) {
                 scannerAttempts++;
                 isInSurvivalWorld = false;
@@ -182,12 +187,11 @@ function createBot(username) {
                 }, 250);
 
             } else {
-                // If items are gone, stop spamming completely and clear the interval
                 if (!isInSurvivalWorld) {
                     isInSurvivalWorld = true;
                     logCombined(username, '⚔️ [Inventory Guard Success] Inside Survival World! Stopping lobby checks.');
                     
-                    clearInterval(navigationInterval); // Stops the loop entirely so no more commands are run
+                    clearInterval(navigationInterval); 
                     
                     isProcessingQueue = false;
                     setTimeout(() => { processSpawnQueue(); }, 20000);

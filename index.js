@@ -3,14 +3,12 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const fs = require('fs');
 
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     host: 'play.minegens.id',                
     port: 25565,                     
     version: '1.20.1',               
-    password: 'kuyashii123', // Static fallback fallback pass from old code
     botNames: ['SuperSusu', 'HiroHito', 'Yatta_'],
     hotbarSlot: 0,       
     menuTargetSlot: 12   
@@ -22,23 +20,18 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 let activeBots = {}; // Holds instances of BotInstance class
-const LOG_FILE = path.join(__dirname, 'bot_records.txt');
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// --- HOISTED CENTRAL LOGGER ---
+// --- HOISTED CENTRAL LIVE LOGGER (File logging removed) ---
 function logCombined(username, message) {
     const timestamp = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Jakarta' });
     const formattedLog = `[${timestamp}] [${username}] ${message}`;
     
     console.log(formattedLog);
     io.emit('chat-message', { time: timestamp, username, message });
-    
-    fs.appendFile(LOG_FILE, formattedLog + '\n', (err) => {
-        if (err) console.error('FS Write Error:', err);
-    });
 }
 
 function generatePasswordFromUsername(username) {
@@ -60,7 +53,7 @@ class BotInstance {
         this.isReadyToChat = false;
         this.status = 'Initializing';
 
-        // 🟢 Stagger connections safely like your working script (5 seconds apart)
+        // Stagger connections safely like your working script (5 seconds apart)
         setTimeout(() => this.connect(), index * 5000);
     }
 
@@ -245,7 +238,6 @@ io.on('connection', (socket) => {
 function startApp() {
     console.log('[System] Launching Staggered Object Matrix...');
     
-    // 🟢 Instantiates accounts using the clean Class array logic
     CONFIG.botNames.forEach((name, i) => {
         activeBots[name] = new BotInstance(name, i);
     });

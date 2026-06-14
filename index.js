@@ -10,7 +10,7 @@ const PASSWORD = 'YourSecurePassword123';
 const TARGET_PLAYER = 'ditnshyky';
 const WEB_PORT = 3000;
 
-const accounts = ['Natan26', 'Chernobyl', 'ElReno13'];
+const accounts = [ 'Chernobyl'];
 const bots = {}; 
 
 // ------------------------------------------------------------

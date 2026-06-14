@@ -6,18 +6,17 @@ const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
-const PASSWORD = 'BraBra1998'; 
+const PASSWORD = 'YourSecurePassword123'; // Replace with your actual password
 const TARGET_PLAYER = 'ditnshyky';
 const WEB_PORT = 3000;
 
 const accounts = ['Natan26', 'Chernobyl', 'ElReno13'];
-const bots = {}; // Store bot instances here for global access
+const bots = {}; 
 
 // ------------------------------------------------------------
 // Web Dashboard Server Setup
 // ------------------------------------------------------------
 
-// Serve the dashboard HTML directly
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -36,7 +35,8 @@ app.get('/', (req, res) => {
             select { background: #444; color: white; }
             input[type="text"] { flex-grow: 1; background: #fff; color: #000; }
             button { background: #4caf50; color: white; cursor: pointer; font-weight: bold; }
-            button:hover { background: #45a049; }
+            button.action-btn { background: #ff9800; }
+            button:hover { opacity: 0.9; }
         </style>
     </head>
     <body>
@@ -50,6 +50,7 @@ app.get('/', (req, res) => {
             </select>
             <input type="text" id="chatInput" placeholder="Type raw chat message here..." autocomplete="off"/>
             <button onclick="sendRawChat()">Send Chat</button>
+            <button class="action-btn" onclick="forceNavigate()">Force Hub Click</button>
         </div>
 
         <script src="/socket.io/socket.io.js"></script>
@@ -69,12 +70,15 @@ app.get('/', (req, res) => {
                 const botName = document.getElementById('botSelector').value;
                 const message = document.getElementById('chatInput').value;
                 if(!message.trim()) return;
-                
                 socket.emit('send-chat', { botName, message });
                 document.getElementById('chatInput').value = '';
             }
 
-            // Allow press enter to send
+            function forceNavigate() {
+                const botName = document.getElementById('botSelector').value;
+                socket.emit('force-navigate', { botName });
+            }
+
             document.getElementById('chatInput').addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') sendRawChat();
             });
@@ -84,22 +88,26 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Handle real-time Web Dashboard communication
 io.on('connection', (socket) => {
     socket.on('send-chat', ({ botName, message }) => {
         if (botName === 'all') {
-            Object.values(bots).forEach(bot => {
-                if(bot && bot.emit) bot.chat(message);
-            });
-            sendLog('GLOBAL', `Sent command to ALL bots: "${message}"`, 'system');
+            Object.values(bots).forEach(bot => bot?.chat(message));
         } else if (bots[botName]) {
             bots[botName].chat(message);
-            sendLog('GLOBAL', `Sent command to ${botName}: "${message}"`, 'system');
+        }
+    });
+
+    socket.on('force-navigate', ({ botName }) => {
+        if (botName === 'all') {
+            Object.values(bots).forEach(bot => { if(bot) navigateToSurvival(bot); });
+            sendLog('GLOBAL', 'Forced all active bots to retry Hub navigation.', 'system');
+        } else if (bots[botName]) {
+            navigateToSurvival(bots[botName]);
+            sendLog('GLOBAL', `Forced ${botName} to retry Hub navigation.`, 'system');
         }
     });
 });
 
-// Helper function to stream server console messages to the UI
 function sendLog(botName, text, type = 'chat') {
     const time = new Date().toLocaleTimeString();
     console.log(`[${time}] [${botName}] ${text}`);
@@ -115,12 +123,15 @@ http.listen(WEB_PORT, () => {
 // Mineflayer Bot Logic
 // ------------------------------------------------------------
 
-accounts.forEach((username) => {
-    startBot(username);
+// FIX 1: Stagger initial logins by 5 seconds to prevent ECONNRESET firewall blocks
+accounts.forEach((username, index) => {
+    setTimeout(() => {
+        startBot(username);
+    }, index * 5000); 
 });
 
 function startBot(username) {
-    sendLog(username, "Initializing bot instance...", 'system');
+    sendLog(username, "Connecting to server...", 'system');
 
     const bot = mineflayer.createBot({
         host: SERVER_HOST,
@@ -128,106 +139,123 @@ function startBot(username) {
         auth: 'offline'
     });
 
-    bots[username] = bot; // Save reference for dashboard execution
+    bots[username] = bot; 
 
-    let hasLoggedIn = false;
     let hasNavigated = false;
+    let authTimeout, navTimeout;
 
-    // Helper to check for unwanted action bar / spam symbols
     function containsIgnoredSymbols(text) {
         return text.includes('❤') || text.includes('★') || text.includes('⛨');
     }
 
     bot.on('spawn', () => {
-        sendLog(username, "Spawned into the server.", 'system');
-        
-        setTimeout(() => {
-            if (!hasNavigated) {
-                navigateToSurvival(bot);
-            }
-        }, 3000);
+        sendLog(username, "Spawned into the lobby.", 'system');
+        hasNavigated = false;
+
+        // Clear any old pending timers
+        clearTimeout(authTimeout);
+        clearTimeout(navTimeout);
+
+        // FIX 2: Proactively execute auth commands instead of waiting for potentially hidden chat prompts
+        authTimeout = setTimeout(() => {
+            sendLog(username, "Sending proactive /login command...", 'system');
+            bot.chat(`/login ${PASSWORD}`);
+
+            // Delay navigation until AFTER login processing completes (3 seconds later)
+            navTimeout = setTimeout(() => {
+                if (!hasNavigated) {
+                    navigateToSurvival(bot);
+                }
+            }, 3000);
+        }, 2000); // Wait 2 seconds after spawning to send login packet
     });
 
-    // Handle standard chat messages
     bot.on('message', (jsonMsg) => {
         const message = jsonMsg.toString().trim();
         
-        // CRITICAL: Completely ignore messages containing action bar symbols
-        if (containsIgnoredSymbols(message)) return;
+        if (containsIgnoredSymbols(message)) return; // Ignore Action-bar/Spam icons completely
 
         sendLog(username, message, 'chat');
 
-        // 1. Authentication Logic
-        if (!hasLoggedIn) {
-            if (message.includes('/register')) {
-                bot.chat(`/register ${PASSWORD}`);
-                hasLoggedIn = true;
-                sendLog(username, "Sent registration command.", 'system');
-            } else if (message.includes('/login')) {
-                bot.chat(`/login ${PASSWORD}`);
-                hasLoggedIn = true;
-                sendLog(username, "Sent login command.", 'system');
-            }
+        const msgLower = message.toLowerCase();
+
+        // FIX 3: Fallback safety if account actually needs registration instead of login
+        if (msgLower.includes('register') || msgLower.includes('registrasi') || msgLower.includes('confirm')) {
+            sendLog(username, "Server requested registration. Sending /register...", 'system');
+            bot.chat(`/register ${PASSWORD}`);
+            
+            // Reset navigation delay to give registration time to apply
+            clearTimeout(navTimeout);
+            navTimeout = setTimeout(() => {
+                if (!hasNavigated) navigateToSurvival(bot);
+            }, 3000);
         }
 
-        // 2. TPA Request Handling
-        if (message.includes(TARGET_PLAYER) && (message.toLowerCase().includes('tpahere') || message.toLowerCase().includes('teleport'))) {
-            sendLog(username, `Detected TPA request from ${TARGET_PLAYER}. Accepting...`, 'system');
+        // TPA Request Handling
+        if (message.includes(TARGET_PLAYER) && (msgLower.includes('tpahere') || msgLower.includes('teleport'))) {
+            sendLog(username, `Accepting TPA from ${TARGET_PLAYER}`, 'system');
             bot.chat('/tpaccept');
         }
 
-        // 3. Fallback Hub detection 
-        if (message.toLowerCase().includes('welcome to the hub') || message.toLowerCase().includes('lobby')) {
-            sendLog(username, "Hub environment detected. Resetting loop navigation...", 'system');
+        // Hub fallback loop reset
+        if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby')) {
+            sendLog(username, "Detected hub lobby environment. Resetting navigation sequence...", 'system');
             hasNavigated = false;
-            setTimeout(() => navigateToSurvival(bot), 3000);
+            clearTimeout(navTimeout);
+            navTimeout = setTimeout(() => navigateToSurvival(bot), 4000);
         }
     });
 
-    // Extra layer: Ignore action bar packets specifically if streamed separately by Mineflayer
     bot.on('actionBar', (jsonMsg) => {
         const message = jsonMsg.toString();
         if (containsIgnoredSymbols(message)) return; 
     });
 
-    // 4. GUI Chest Inventory click handler
+    // GUI Menu Interaction Handler
     bot.on('windowOpen', async (window) => {
-        sendLog(username, "Server chest menu opened.", 'system');
+        sendLog(username, `Server Menu opened (Title: ${window.title || 'Chest'}). Clicking slot 12...`, 'system');
         try {
-            // Left click slot 12 (Survival RPG Item)
+            // Left click slot 12 (Survival RPG)
             await bot.clickWindow(12, 0, 0);
-            sendLog(username, "Successfully selected slot 12 (Survival RPG).", 'system');
+            sendLog(username, "Successfully selected slot 12.", 'system');
             hasNavigated = true;
         } catch (err) {
-            sendLog(username, `Failed interacting with slot 12: ${err.message}`, 'system');
+            sendLog(username, `Failed window interaction: ${err.message}`, 'system');
         }
     });
 
-    // 5. Automatic Reconnection Handler
     bot.on('end', (reason) => {
-        sendLog(username, `Disconnected! Reason: ${reason}`, 'system');
-        hasLoggedIn = false;
+        sendLog(username, `Disconnected: ${reason}`, 'system');
         hasNavigated = false;
+        clearTimeout(authTimeout);
+        clearTimeout(navTimeout);
         delete bots[username];
         
-        sendLog(username, "Scheduling automated reboot in 10 seconds...", 'system');
-        setTimeout(() => {
-            startBot(username);
-        }, 10000);
+        sendLog(username, "Reconnecting in 10 seconds...", 'system');
+        setTimeout(() => startBot(username), 10000);
     });
 
     bot.on('error', (err) => {
-        sendLog(username, `Internal Error: ${err.message}`, 'system');
+        if (err.message.includes('ECONNRESET')) {
+            sendLog(username, "Connection reset by server firewall. Will retry automatically.", 'system');
+        } else {
+            sendLog(username, `Internal Error: ${err.message}`, 'system');
+        }
     });
 }
 
+// FIX 4: Ensure the slot packet fully updates on the server before trying to right click
 async function navigateToSurvival(bot) {
-    sendLog(bot.username, "Executing initial navigation hotbar interaction...", 'system');
+    sendLog(bot.username, "Selecting hotbar slot 0...", 'system');
     try {
         bot.setQuickBarSlot(0); // Highlight first hotbar slot
-        bot.activateItem();    // Right click
+        
+        setTimeout(() => {
+            sendLog(bot.username, "Right-clicking selector item...", 'system');
+            bot.activateItem(false); // Right-click main hand item
+        }, 500); // 500ms network buffer delay
     } catch (err) {
-        sendLog(bot.username, `Hotbar switch failure: ${err.message}`, 'system');
+        sendLog(bot.username, `Hotbar sequence error: ${err.message}`, 'system');
     }
 }
 

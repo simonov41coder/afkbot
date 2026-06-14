@@ -3,15 +3,15 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 // ==================== CONFIGURATION ====================
 const CONFIG = {
     host: 'play.minegens.id',                
     port: 25565,                     
     version: '1.20.1',               
-    
+    password: 'kuyashii123', // Static fallback fallback pass from old code
     botNames: ['SuperSusu', 'HiroHito', 'Yatta_'],
-
     hotbarSlot: 0,       
     menuTargetSlot: 12   
 };
@@ -21,19 +21,24 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-let activeBots = {};
-let spawnQueue = [];
-let isProcessingQueue = false;
+let activeBots = {}; // Holds instances of BotInstance class
+const LOG_FILE = path.join(__dirname, 'bot_records.txt');
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// 🔧 HOISTED LOGGER FUNCTION (Moved up to prevent ReferenceErrors)
+// --- HOISTED CENTRAL LOGGER ---
 function logCombined(username, message) {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[${timestamp}] [${username}] ${message}`);
+    const timestamp = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Jakarta' });
+    const formattedLog = `[${timestamp}] [${username}] ${message}`;
+    
+    console.log(formattedLog);
     io.emit('chat-message', { time: timestamp, username, message });
+    
+    fs.appendFile(LOG_FILE, formattedLog + '\n', (err) => {
+        if (err) console.error('FS Write Error:', err);
+    });
 }
 
 function generatePasswordFromUsername(username) {
@@ -45,112 +50,130 @@ function generatePasswordFromUsername(username) {
     return `McAfk_${uniquePart}_Pass!`; 
 }
 
-function enqueueSpawn(username, delay = 0) {
-    if (spawnQueue.includes(username)) return; 
-    
-    logCombined(username, `[Queue] Added to connection queue. Standing by...`);
-    spawnQueue.push(username);
-    
-    setTimeout(() => {
-        processSpawnQueue();
-    }, delay);
-}
+// --- BOT INSTANCE OBJECT ARCHITECTURE ---
+class BotInstance {
+    constructor(username, index) {
+        this.username = username;
+        this.bot = null;
+        this.navigationInterval = null;
+        this.isInSurvivalWorld = false;
+        this.isReadyToChat = false;
+        this.status = 'Initializing';
 
-function processSpawnQueue() {
-    if (isProcessingQueue || spawnQueue.length === 0) return;
-    
-    isProcessingQueue = true;
-    const nextBot = spawnQueue.shift();
-    
-    createBot(nextBot);
-}
+        // 🟢 Stagger connections safely like your working script (5 seconds apart)
+        setTimeout(() => this.connect(), index * 5000);
+    }
 
-function createBot(username) {
-    const botPassword = generatePasswordFromUsername(username);
-    let navigationInterval = null; 
-    let isInSurvivalWorld = false; 
+    connect() {
+        this.status = 'Connecting...';
+        logCombined(this.username, `[System] Opening network socket channel...`);
 
-    logCombined(username, `[System] Opening network socket channel...`);
+        const botPassword = generatePasswordFromUsername(this.username);
 
-    const botOptions = {
-        host: CONFIG.host,
-        port: CONFIG.port,
-        username: username,
-        version: CONFIG.version,
-        auth: 'offline',
-        connectTimeout: 20000 
-    };
+        this.bot = mineflayer.createBot({
+            host: CONFIG.host,
+            port: CONFIG.port,
+            username: this.username,
+            version: CONFIG.version,
+            auth: 'offline',
+            connectTimeout: 20000 
+        });
 
-    const bot = mineflayer.createBot(botOptions);
-    bot.isReadyToChat = false; 
-    activeBots[username] = bot;
-
-    bot.once('connect', () => {
-        try {
-            const socket = bot._client.socket;
-            if (socket) {
-                logCombined(username, `📡 [Network] Handshake completed successfully.`);
+        this.bot.once('connect', () => {
+            try {
+                if (this.bot._client && this.bot._client.socket) {
+                    logCombined(this.username, `📡 [Network] Handshake completed successfully.`);
+                }
+            } catch (err) {
+                logCombined(this.username, `⚠️ [Network Log Failed]: ${err.message}`);
             }
-        } catch (err) {
-            logCombined(username, `⚠️ [Network Log Failed]: ${err.message}`);
-        }
-    });
+        });
 
-    bot.on('spawn', () => {
-        io.emit('bot-status', { username, status: 'Online' });
-        bot.isReadyToChat = true; 
-        
-        logCombined(username, '🟢 Spawned in lobby! Sending authentication request...');
-        setTimeout(() => {
-            if (bot._client && bot._client.socket) {
-                bot.chat(`/register ${botPassword}`);
+        this.bot.on('spawn', () => {
+            this.status = 'Lobby (Auth)';
+            io.emit('bot-status', { username: this.username, status: 'Online' });
+            this.isReadyToChat = true; 
+            
+            logCombined(this.username, '🟢 Spawned in lobby! Sending authentication request...');
+            
+            setTimeout(() => {
+                if (this.bot && this.bot._client && this.bot._client.socket) {
+                    this.bot.chat(`/register ${botPassword}`);
+                }
+            }, 1500);
+
+            this.runAggressiveInventoryScanner();
+        });
+
+        this.bot.on('message', (jsonMsg, position) => {
+            if (position === 'chat') return; 
+
+            const message = jsonMsg.toString();
+            if (message.includes('❤') || message.includes('★') || message.includes('⛨')) return;
+            if (message.trim() === '') return;
+
+            logCombined(this.username, `[Server System] ${message}`);
+
+            const msgLower = message.toLowerCase();
+
+            if (msgLower.includes('already registered') && !msgLower.includes('already logged')) {
+                logCombined(this.username, '🔑 [Auth System] Overriding with /login prompt...');
+                this.bot.chat(`/login ${botPassword}`);
             }
-        }, 1500);
 
-        runAggressiveInventoryScanner(bot, username);
-    });
+            if (
+                msgLower.includes('too many accounts') || 
+                msgLower.includes('limit reached') || 
+                msgLower.includes('ip address')
+            ) {
+                logCombined(this.username, `🚨 [IP Limit] Host firewall dropped connection permanently.`);
+                this.disconnectCleanly();
+            }
+        });
 
-    bot.on('message', (jsonMsg, position) => {
-        if (position === 'chat') return; 
+        // 📦 CONTAINER MENU CLICKS
+        this.bot.on('windowOpen', async (window) => {
+            logCombined(this.username, `📦 [WINDOW OPENED] "${window.title}" - Clicking destination node...`);
+            setTimeout(async () => {
+                try {
+                    if (this.bot && this.isReadyToChat) {
+                        await this.bot.clickWindow(CONFIG.menuTargetSlot, 0, 0);
+                        logCombined(this.username, '✅ [UI Success] Click registered.');
+                    }
+                } catch (err) {
+                    logCombined(this.username, `❌ [UI Exception] Click dropped: ${err.message}`);
+                }
+            }, 1200); 
+        });
 
-        const message = jsonMsg.toString();
-        if (message.includes('❤') || message.includes('★') || message.includes('⛨')) return;
-        if (message.trim() === '') return;
+        this.bot.on('end', (reason) => {
+            this.status = 'Offline';
+            this.isReadyToChat = false;
+            this.isInSurvivalWorld = false;
+            if (this.navigationInterval) clearInterval(this.navigationInterval);
+            
+            io.emit('bot-status', { username: this.username, status: 'Disconnected' });
+            logCombined(this.username, `🔴 Socket Closed [${reason}]. Reconnecting in 25s...`);
 
-        logCombined(username, `[Server System] ${message}`);
+            // Safe automatic loop reconnection schedule
+            setTimeout(() => this.connect(), 25000);
+        });
 
-        const msgLower = message.toLowerCase();
+        this.bot.on('error', (err) => {
+            logCombined(this.username, `⚠️ Network Engine Error: ${err.message}`);
+            this.disconnectCleanly();
+        });
+    }
 
-        if (msgLower.includes('already registered') && !msgLower.includes('already logged')) {
-            logCombined(username, '🔑 [Auth System] Overriding with /login prompt configuration...');
-            bot.chat(`/${msgLower.includes('/') ? '' : 'login '}${botPassword}`);
-        }
-
-        if (
-            msgLower.includes('too many accounts') || 
-            msgLower.includes('limit reached') || 
-            msgLower.includes('too many players logged in with your ip address')
-        ) {
-            logCombined(username, `🚨 [IP Limit] Host firewall dropped connection permanently.`);
-            if (navigationInterval) clearInterval(navigationInterval);
-            bot.quit('IP Limit Hit');
-        }
-    });
-
-    function runAggressiveInventoryScanner(bot, username) {
-        if (navigationInterval) clearInterval(navigationInterval);
-
+    runAggressiveInventoryScanner() {
+        if (this.navigationInterval) clearInterval(this.navigationInterval);
         let scannerAttempts = 0;
 
-        navigationInterval = setInterval(() => {
-            if (!bot || !bot.inventory || !bot.isReadyToChat) {
-                if (navigationInterval) clearInterval(navigationInterval);
-                return;
-            }
+        this.navigationInterval = setInterval(() => {
+            if (!this.bot || !this.bot.inventory || !this.isReadyToChat) return;
+            if (this.bot.currentWindow) return;
 
-            if (bot.currentWindow) return;
-
-            const hotbarItems = bot.inventory.items();
+            const hotbarItems = this.bot.inventory.items();
             const lobbyItemFound = hotbarItems.some(item => 
                 item.name.includes('compass') || 
                 item.name.includes('clock') || 
@@ -158,114 +181,78 @@ function createBot(username) {
                 item.name.includes('book')
             );
 
-            const heldItem = bot.heldItem;
-            const holdingLobbyItem = heldItem && (
-                heldItem.name.includes('compass') || 
-                heldItem.name.includes('clock') ||
-                heldItem.name.includes('nether_star') ||
-                heldItem.name.includes('book')
-            );
-
-            if (lobbyItemFound || holdingLobbyItem) {
+            if (lobbyItemFound) {
                 scannerAttempts++;
-                isInSurvivalWorld = false;
+                this.isInSurvivalWorld = false;
+                this.status = 'Lobby (Joining)';
 
-                logCombined(username, `📥 [Inventory Guard] Lobby items visible. Forcing menu action (Scan #${scannerAttempts})`);
-                bot.setQuickBarSlot(CONFIG.hotbarSlot);
+                logCombined(this.username, `📥 [Inventory Guard] Lobby items visible. Opening navigation UI (Scan #${scannerAttempts})`);
+                this.bot.setQuickBarSlot(CONFIG.hotbarSlot);
 
                 setTimeout(() => {
-                    if (bot.isReadyToChat && !isInSurvivalWorld) {
-                        bot.activateItem(false); 
+                    if (this.bot && this.isReadyToChat && !this.isInSurvivalWorld) {
+                        this.bot.activateItem(false); 
                         
                         if (scannerAttempts % 2 === 0) {
-                            logCombined(username, `⚡ [Aggressive Route] Forcing text fallbacks...`);
-                            bot.chat('/menu');
-                            bot.chat('/selector');
-                            bot.chat('/server survival');
+                            logCombined(this.username, `⚡ [Aggressive Route] Forcing fallback commands...`);
+                            this.bot.chat('/menu');
+                            this.bot.chat('/server survival');
                         }
                     }
                 }, 250);
 
             } else {
-                if (!isInSurvivalWorld) {
-                    isInSurvivalWorld = true;
-                    logCombined(username, '⚔️ [Inventory Guard Success] Inside Survival World! Stopping lobby checks.');
-                    
-                    clearInterval(navigationInterval); 
-                    
-                    isProcessingQueue = false;
-                    setTimeout(() => { processSpawnQueue(); }, 20000);
+                if (!this.isInSurvivalWorld) {
+                    this.isInSurvivalWorld = true;
+                    this.status = 'In-Game';
+                    logCombined(this.username, '⚔️ [Inventory Guard Success] Inside Survival World!');
+                    clearInterval(this.navigationInterval); 
                 }
             }
-        }, 4000); 
+        }, 5000); 
     }
 
-    bot.on('windowOpen', async (window) => {
-        logCombined(username, `📦 [WINDOW OPENED] "${window.title}" - Clicking destination node...`);
-        setTimeout(async () => {
-            try {
-                if (bot && bot.isReadyToChat) {
-                    await bot.clickWindow(CONFIG.menuTargetSlot, 0, 0);
-                    logCombined(username, '✅ [UI Success] Click registered.');
-                }
-            } catch (err) {
-                logCombined(username, `❌ [UI Exception] Click dropped: ${err.message}`);
-            }
-        }, 1200); 
-    });
+    sendChat(command) {
+        if (this.bot && this.isReadyToChat && this.bot._client?.socket) {
+            this.bot.chat(command);
+            logCombined(this.username, `📤 [OUTGOING] Sent command successfully: "${command}"`);
+        } else {
+            logCombined(this.username, `❌ [FAILED] Command dropped: "${command}" (Bot offline)`);
+        }
+    }
 
-    bot.on('end', (reason) => {
-        if (navigationInterval) clearInterval(navigationInterval);
-        isInSurvivalWorld = false; 
-        
-        if (activeBots[username]) activeBots[username].isReadyToChat = false;
-        io.emit('bot-status', { username, status: 'Disconnected' });
-        
-        logCombined(username, `🔴 Socket Closed [${reason}]. Re-routing back to queue in 30s...`);
-        activeBots[username] = null;
-
-        isProcessingQueue = false;
-        enqueueSpawn(username, 30000);
-    });
-
-    bot.on('error', (err) => {
-        logCombined(username, `⚠️ Network Engine Error: ${err.message}`);
-        if (activeBots[username]) activeBots[username].isReadyToChat = false;
-        bot.quit('Network Error');
-    });
+    disconnectCleanly() {
+        if (this.navigationInterval) clearInterval(this.navigationInterval);
+        try { this.bot.quit(); } catch(e){}
+    }
 }
 
+// --- CONTROLLER SOCKET EVENTS ---
 io.on('connection', (socket) => {
     socket.emit('sync-bot-list', Object.keys(activeBots));
+    
     socket.on('send-command', (data) => {
         const { target, command } = data;
-        const executeChat = (username) => {
-            const currentBot = activeBots[username];
-            if (currentBot && currentBot.isReadyToChat && currentBot._client && currentBot._client.socket) {
-                currentBot.chat(command);
-                logCombined(username, `📤 [OUTGOING] Sent command successfully: "${command}"`);
-            } else {
-                logCombined(username, `❌ [STUCK / FAILED] Command dropped: "${command}" (Reason: Bot offline or loading)`);
-            }
-        };
         if (target === 'all') {
-            Object.keys(activeBots).forEach(username => { executeChat(username); });
+            Object.values(activeBots).forEach(instance => instance.sendChat(command));
         } else {
-            executeChat(target);
+            activeBots[target]?.sendChat(command);
         }
     });
 });
 
+// --- SERVER ACTIVATION ---
 function startApp() {
-    console.log('[System] Initializing Sequential Spawning Matrix...');
+    console.log('[System] Launching Staggered Object Matrix...');
     
-    CONFIG.botNames.forEach((name) => {
-        enqueueSpawn(name);
+    // 🟢 Instantiates accounts using the clean Class array logic
+    CONFIG.botNames.forEach((name, i) => {
+        activeBots[name] = new BotInstance(name, i);
     });
 
     server.listen(3000, () => {
         console.log('\n======================================================');
-        console.log(`🖥️ Modern Control Dashboard Active at: http://localhost:3000`);
+        console.log(`🖥️ Modern Dashboard Configured & Listening on: http://localhost:3000`);
         console.log('======================================================\n');
     });
 }

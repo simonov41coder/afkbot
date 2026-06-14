@@ -6,7 +6,7 @@ const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
-const PASSWORD = 'YourSecurePassword123'; // Replace with your actual password
+const PASSWORD = 'YourSecurePassword123'; 
 const TARGET_PLAYER = 'ditnshyky';
 const WEB_PORT = 3000;
 
@@ -100,10 +100,8 @@ io.on('connection', (socket) => {
     socket.on('force-navigate', ({ botName }) => {
         if (botName === 'all') {
             Object.values(bots).forEach(bot => { if(bot) navigateToSurvival(bot); });
-            sendLog('GLOBAL', 'Forced all active bots to retry Hub navigation.', 'system');
         } else if (bots[botName]) {
             navigateToSurvival(bots[botName]);
-            sendLog('GLOBAL', `Forced ${botName} to retry Hub navigation.`, 'system');
         }
     });
 });
@@ -123,7 +121,6 @@ http.listen(WEB_PORT, () => {
 // Mineflayer Bot Logic
 // ------------------------------------------------------------
 
-// FIX 1: Stagger initial logins by 5 seconds to prevent ECONNRESET firewall blocks
 accounts.forEach((username, index) => {
     setTimeout(() => {
         startBot(username);
@@ -142,7 +139,8 @@ function startBot(username) {
     bots[username] = bot; 
 
     let hasNavigated = false;
-    let authTimeout, navTimeout;
+    let navTimeout;
+    let lastAuthTime = 0; // Anti-spam rate limiter timestamp
 
     function containsIgnoredSymbols(text) {
         return text.includes('❤') || text.includes('★') || text.includes('⛨');
@@ -151,44 +149,68 @@ function startBot(username) {
     bot.on('spawn', () => {
         sendLog(username, "Spawned into the lobby.", 'system');
         hasNavigated = false;
-
-        // Clear any old pending timers
-        clearTimeout(authTimeout);
         clearTimeout(navTimeout);
 
-        // FIX 2: Proactively execute auth commands instead of waiting for potentially hidden chat prompts
-        authTimeout = setTimeout(() => {
-            sendLog(username, "Sending proactive /login command...", 'system');
-            bot.chat(`/login ${PASSWORD}`);
-
-            // Delay navigation until AFTER login processing completes (3 seconds later)
-            navTimeout = setTimeout(() => {
-                if (!hasNavigated) {
-                    navigateToSurvival(bot);
-                }
-            }, 3000);
-        }, 2000); // Wait 2 seconds after spawning to send login packet
+        // Send a proactive login command shortly after spawning
+        setTimeout(() => {
+            const now = Date.now();
+            if (now - lastAuthTime > 4000) {
+                lastAuthTime = now;
+                sendLog(username, "Sending proactive /login...", 'system');
+                bot.chat(`/login ${PASSWORD}`);
+                
+                // Set up navigation attempt right after
+                navTimeout = setTimeout(() => {
+                    if (!hasNavigated) navigateToSurvival(bot);
+                }, 3000);
+            }
+        }, 2000);
     });
 
     bot.on('message', (jsonMsg) => {
         const message = jsonMsg.toString().trim();
         
-        if (containsIgnoredSymbols(message)) return; // Ignore Action-bar/Spam icons completely
+        if (containsIgnoredSymbols(message)) return; 
 
         sendLog(username, message, 'chat');
-
         const msgLower = message.toLowerCase();
 
-        // FIX 3: Fallback safety if account actually needs registration instead of login
-        if (msgLower.includes('register') || msgLower.includes('registrasi') || msgLower.includes('confirm')) {
-            sendLog(username, "Server requested registration. Sending /register...", 'system');
-            bot.chat(`/register ${PASSWORD}`);
-            
-            // Reset navigation delay to give registration time to apply
-            clearTimeout(navTimeout);
-            navTimeout = setTimeout(() => {
-                if (!hasNavigated) navigateToSurvival(bot);
-            }, 3000);
+        // --- FIXED AUTHENTICATION LOGIC BLOCK ---
+        const now = Date.now();
+        const isCooldownActive = (now - lastAuthTime < 4000); // 4-second protection window
+
+        if (!isCooldownActive) {
+            if (msgLower.includes('already registered')) {
+                lastAuthTime = now;
+                sendLog(username, "Detected 'already registered' message. Correcting with /login...", 'system');
+                bot.chat(`/login ${PASSWORD}`);
+                
+                clearTimeout(navTimeout);
+                navTimeout = setTimeout(() => {
+                    if (!hasNavigated) navigateToSurvival(bot);
+                }, 3000);
+
+            } else if (msgLower.includes('not registered') || msgLower.includes('silahkan register')) {
+                lastAuthTime = now;
+                sendLog(username, "Detected 'not registered' message. Sending /register...", 'system');
+                bot.chat(`/register ${PASSWORD}`);
+                
+                clearTimeout(navTimeout);
+                navTimeout = setTimeout(() => {
+                    if (!hasNavigated) navigateToSurvival(bot);
+                }, 3000);
+
+            } else if (msgLower.includes('/register') && !msgLower.includes('already') && !msgLower.includes('sending')) {
+                // Generic fallback for registration prompts
+                lastAuthTime = now;
+                sendLog(username, "Generic register prompt noticed. Sending /register...", 'system');
+                bot.chat(`/register ${PASSWORD}`);
+                
+                clearTimeout(navTimeout);
+                navTimeout = setTimeout(() => {
+                    if (!hasNavigated) navigateToSurvival(bot);
+                }, 3000);
+            }
         }
 
         // TPA Request Handling
@@ -197,12 +219,13 @@ function startBot(username) {
             bot.chat('/tpaccept');
         }
 
-        // Hub fallback loop reset
-        if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby')) {
-            sendLog(username, "Detected hub lobby environment. Resetting navigation sequence...", 'system');
-            hasNavigated = false;
+        // Hub fallback handler
+        if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby') || msgLower.includes('useful commands:')) {
+            // Once we see the help commands or hub text, we are authenticated! Run navigation.
             clearTimeout(navTimeout);
-            navTimeout = setTimeout(() => navigateToSurvival(bot), 4000);
+            navTimeout = setTimeout(() => {
+                if (!hasNavigated) navigateToSurvival(bot);
+            }, 2000);
         }
     });
 
@@ -213,9 +236,8 @@ function startBot(username) {
 
     // GUI Menu Interaction Handler
     bot.on('windowOpen', async (window) => {
-        sendLog(username, `Server Menu opened (Title: ${window.title || 'Chest'}). Clicking slot 12...`, 'system');
+        sendLog(username, `Server Menu opened. Clicking slot 12...`, 'system');
         try {
-            // Left click slot 12 (Survival RPG)
             await bot.clickWindow(12, 0, 0);
             sendLog(username, "Successfully selected slot 12.", 'system');
             hasNavigated = true;
@@ -227,7 +249,6 @@ function startBot(username) {
     bot.on('end', (reason) => {
         sendLog(username, `Disconnected: ${reason}`, 'system');
         hasNavigated = false;
-        clearTimeout(authTimeout);
         clearTimeout(navTimeout);
         delete bots[username];
         
@@ -236,24 +257,21 @@ function startBot(username) {
     });
 
     bot.on('error', (err) => {
-        if (err.message.includes('ECONNRESET')) {
-            sendLog(username, "Connection reset by server firewall. Will retry automatically.", 'system');
-        } else {
+        if (!err.message.includes('ECONNRESET')) {
             sendLog(username, `Internal Error: ${err.message}`, 'system');
         }
     });
 }
 
-// FIX 4: Ensure the slot packet fully updates on the server before trying to right click
 async function navigateToSurvival(bot) {
     sendLog(bot.username, "Selecting hotbar slot 0...", 'system');
     try {
-        bot.setQuickBarSlot(0); // Highlight first hotbar slot
+        bot.setQuickBarSlot(0); 
         
         setTimeout(() => {
             sendLog(bot.username, "Right-clicking selector item...", 'system');
-            bot.activateItem(false); // Right-click main hand item
-        }, 500); // 500ms network buffer delay
+            bot.activateItem(false); 
+        }, 500); 
     } catch (err) {
         sendLog(bot.username, `Hotbar sequence error: ${err.message}`, 'system');
     }

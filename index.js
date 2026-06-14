@@ -10,6 +10,7 @@ const CONFIG = {
     port: 25565,                     
     version: '1.20.1',               
     
+    // Reverted back to your preferred names list
     botNames: ['SuperSusu', 'HiroHito', 'Yatta_'],
 
     hotbarSlot: 0,       
@@ -62,7 +63,6 @@ function createBot(username) {
     const botPassword = generatePasswordFromUsername(username);
     let navigationInterval = null; 
     let isInSurvivalWorld = false; 
-    let lastBalResponseTime = 0;
 
     logCombined(username, `[System] Opening network socket channel...`);
 
@@ -101,7 +101,7 @@ function createBot(username) {
             }
         }, 1500);
 
-        runAggressiveBalanceScanner(bot, username);
+        runAggressiveInventoryScanner(bot, username);
     });
 
     bot.on('message', (jsonMsg, position) => {
@@ -111,24 +111,9 @@ function createBot(username) {
         if (message.includes('❤') || message.includes('★') || message.includes('⛨')) return;
         if (message.trim() === '') return;
 
-        // Watch for economy balance messages to verify survival state
-        const msgLower = message.toLowerCase();
-        
-        // Match standard patterns like "Balance:", "Money:", "$", "Coins:"
-        if (msgLower.includes('balance') || msgLower.includes('money') || msgLower.includes('$') || msgLower.includes('coins')) {
-            lastBalResponseTime = Date.now();
-            
-            if (!isInSurvivalWorld) {
-                isInSurvivalWorld = true;
-                logCombined(username, `⚔️ [Economy Guard Success] Valid /bal returned! Inside Survival World. Stopping lobby checks.`);
-                
-                clearInterval(navigationInterval); 
-                isProcessingQueue = false;
-                setTimeout(() => { processSpawnQueue(); }, 20000);
-            }
-        }
-
         logCombined(username, `[Server System] ${message}`);
+
+        const msgLower = message.toLowerCase();
 
         if (msgLower.includes('already registered') && !msgLower.includes('already logged')) {
             logCombined(username, '🔑 [Auth System] Overriding with /login prompt configuration...');
@@ -146,50 +131,69 @@ function createBot(username) {
         }
     });
 
-    function runAggressiveBalanceScanner(bot, username) {
+    function runAggressiveInventoryScanner(bot, username) {
         if (navigationInterval) clearInterval(navigationInterval);
 
         let scannerAttempts = 0;
 
         navigationInterval = setInterval(() => {
-            if (!bot || !bot.isReadyToChat) {
+            if (!bot || !bot.inventory || !bot.isReadyToChat) {
                 if (navigationInterval) clearInterval(navigationInterval);
                 return;
             }
 
             if (bot.currentWindow) return;
 
-            // Probe the server environment using your /bal strategy
-            scannerAttempts++;
-            logCombined(username, `🔍 [Economy Probe] Sending /bal to verify server context... (Probe #${scannerAttempts})`);
-            bot.chat('/bal');
+            const hotbarItems = bot.inventory.items();
+            const lobbyItemFound = hotbarItems.some(item => 
+                item.name.includes('compass') || 
+                item.name.includes('clock') || 
+                item.name.includes('nether_star') ||
+                item.name.includes('book')
+            );
 
-            // Give the server 1.5 seconds to reply to the /bal command. 
-            // If the flag hasn't been updated by the message event listener, execute lobby bypass sequences.
-            setTimeout(() => {
-                const timeSinceLastBal = Date.now() - lastBalResponseTime;
-                
-                // If it's been more than 3.5 seconds since a valid balance payload was seen, we are definitely stuck in a hub
-                if (timeSinceLastBal > 3500 && !isInSurvivalWorld) {
-                    logCombined(username, `📥 [Economy Guard Failed] No balance info returned. Executing lobby bypass routine...`);
-                    
-                    bot.setQuickBarSlot(CONFIG.hotbarSlot);
-                    setTimeout(() => {
-                        if (bot.isReadyToChat && !isInSurvivalWorld) {
-                            bot.activateItem(false); // Send right-click navigation hotbar packet
-                            
-                            if (scannerAttempts % 2 === 0) {
-                                logCombined(username, `⚡ [Aggressive Route] Spamming fallback transport routes...`);
-                                bot.chat('/menu');
-                                bot.chat('/selector');
-                                bot.chat('/server survival');
-                            }
+            const heldItem = bot.heldItem;
+            const holdingLobbyItem = heldItem && (
+                heldItem.name.includes('compass') || 
+                heldItem.name.includes('clock') ||
+                heldItem.name.includes('nether_star') ||
+                heldItem.name.includes('book')
+            );
+
+            // FIX: Only send commands if a lobby item is actually detected
+            if (lobbyItemFound || holdingLobbyItem) {
+                scannerAttempts++;
+                isInSurvivalWorld = false;
+
+                logCombined(username, `📥 [Inventory Guard] Lobby items visible. Forcing menu action (Scan #${scannerAttempts})`);
+                bot.setQuickBarSlot(CONFIG.hotbarSlot);
+
+                setTimeout(() => {
+                    if (bot.isReadyToChat && !isInSurvivalWorld) {
+                        bot.activateItem(false); 
+                        
+                        if (scannerAttempts % 2 === 0) {
+                            logCombined(username, `⚡ [Aggressive Route] Forcing text fallbacks...`);
+                            bot.chat('/menu');
+                            bot.chat('/selector');
+                            bot.chat('/server survival');
                         }
-                    }, 250);
-                }
-            }, 1500);
+                    }
+                }, 250);
 
-        }, 4500); // Probes every 4.5 seconds
+            } else {
+                // If items are gone, stop spamming completely and clear the interval
+                if (!isInSurvivalWorld) {
+                    isInSurvivalWorld = true;
+                    logCombined(username, '⚔️ [Inventory Guard Success] Inside Survival World! Stopping lobby checks.');
+                    
+                    clearInterval(navigationInterval); // Stops the loop entirely so no more commands are run
+                    
+                    isProcessingQueue = false;
+                    setTimeout(() => { processSpawnQueue(); }, 20000);
+                }
+            }
+        }, 4000); 
     }
 
     bot.on('windowOpen', async (window) => {
@@ -249,7 +253,7 @@ io.on('connection', (socket) => {
 });
 
 function startApp() {
-    console.log('[System] Initializing Economy Probe Spawning Matrix...');
+    console.log('[System] Initializing Sequential Spawning Matrix...');
     
     CONFIG.botNames.forEach((name) => {
         enqueueSpawn(name);

@@ -10,7 +10,7 @@ const CONFIG = {
     port: 25565,                     
     version: '1.20.1',               
     
-    botNames: ['SuperSusu', 'Gerald_', 'Yatta_'],
+    botNames: ['SuperSusu', 'HiroHito', 'Yatta_'],
 
     hotbarSlot: 0,       
     menuTargetSlot: 12   
@@ -22,8 +22,8 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 let activeBots = {};
-// Track reconnect retry counts per bot to calculate smart waiting times
-let reconnectAttempts = {}; 
+let spawnQueue = [];
+let isProcessingQueue = false;
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -38,12 +38,33 @@ function generatePasswordFromUsername(username) {
     return `McAfk_${uniquePart}_Pass!`; 
 }
 
+function enqueueSpawn(username, delay = 0) {
+    if (spawnQueue.includes(username)) return; 
+    
+    logCombined(username, `[Queue] Added to connection queue. Standing by...`);
+    spawnQueue.push(username);
+    
+    setTimeout(() => {
+        processSpawnQueue();
+    }, delay);
+}
+
+function processSpawnQueue() {
+    if (isProcessingQueue || spawnQueue.length === 0) return;
+    
+    isProcessingQueue = true;
+    const nextBot = spawnQueue.shift();
+    
+    createBot(nextBot);
+}
+
 function createBot(username) {
     const botPassword = generatePasswordFromUsername(username);
     let navigationInterval = null; 
     let isInSurvivalWorld = false; 
+    let lastBalResponseTime = 0;
 
-    logCombined(username, `[System] Spawning bot via native server network interface...`);
+    logCombined(username, `[System] Opening network socket channel...`);
 
     const botOptions = {
         host: CONFIG.host,
@@ -51,8 +72,7 @@ function createBot(username) {
         username: username,
         version: CONFIG.version,
         auth: 'offline',
-        // Added standard timeout settings to prevent sockets from hanging indefinitely
-        connectTimeout: 15000 
+        connectTimeout: 20000 
     };
 
     const bot = mineflayer.createBot(botOptions);
@@ -63,9 +83,7 @@ function createBot(username) {
         try {
             const socket = bot._client.socket;
             if (socket) {
-                logCombined(username, `📡 [Network] Connected successfully to ${socket.remoteAddress}:${socket.remotePort}`);
-                // Reset connection attempt counters upon a successful connection handshake
-                reconnectAttempts[username] = 0;
+                logCombined(username, `📡 [Network] Handshake completed successfully.`);
             }
         } catch (err) {
             logCombined(username, `⚠️ [Network Log Failed]: ${err.message}`);
@@ -76,15 +94,14 @@ function createBot(username) {
         io.emit('bot-status', { username, status: 'Online' });
         bot.isReadyToChat = true; 
         
-        logCombined(username, '🟢 Spawned! Running /register fallback...');
+        logCombined(username, '🟢 Spawned in lobby! Sending authentication request...');
         setTimeout(() => {
-            // Only chat if the bot socket is still open and connected
             if (bot._client && bot._client.socket) {
                 bot.chat(`/register ${botPassword}`);
             }
-        }, 1000);
+        }, 1500);
 
-        runAggressiveInventoryScanner(bot, username);
+        runAggressiveBalanceScanner(bot, username);
     });
 
     bot.on('message', (jsonMsg, position) => {
@@ -94,12 +111,27 @@ function createBot(username) {
         if (message.includes('❤') || message.includes('★') || message.includes('⛨')) return;
         if (message.trim() === '') return;
 
+        // Watch for economy balance messages to verify survival state
+        const msgLower = message.toLowerCase();
+        
+        // Match standard patterns like "Balance:", "Money:", "$", "Coins:"
+        if (msgLower.includes('balance') || msgLower.includes('money') || msgLower.includes('$') || msgLower.includes('coins')) {
+            lastBalResponseTime = Date.now();
+            
+            if (!isInSurvivalWorld) {
+                isInSurvivalWorld = true;
+                logCombined(username, `⚔️ [Economy Guard Success] Valid /bal returned! Inside Survival World. Stopping lobby checks.`);
+                
+                clearInterval(navigationInterval); 
+                isProcessingQueue = false;
+                setTimeout(() => { processSpawnQueue(); }, 20000);
+            }
+        }
+
         logCombined(username, `[Server System] ${message}`);
 
-        const msgLower = message.toLowerCase();
-
         if (msgLower.includes('already registered') && !msgLower.includes('already logged')) {
-            logCombined(username, '🔑 [Auth System] Account pre-registered. Overriding with clean /login command...');
+            logCombined(username, '🔑 [Auth System] Overriding with /login prompt configuration...');
             bot.chat(`/${msgLower.includes('/') ? '' : 'login '}${botPassword}`);
         }
 
@@ -108,85 +140,68 @@ function createBot(username) {
             msgLower.includes('limit reached') || 
             msgLower.includes('too many players logged in with your ip address')
         ) {
-            logCombined(username, `🚨 [IP Limit] Host IP address has hit the maximum allowance limit! Stopping reconnect routine.`);
+            logCombined(username, `🚨 [IP Limit] Host firewall dropped connection permanently.`);
             if (navigationInterval) clearInterval(navigationInterval);
-            reconnectAttempts[username] = 99; // Artificially max out attempts to prevent aggressive reconnect loop
             bot.quit('IP Limit Hit');
         }
     });
 
-    function runAggressiveInventoryScanner(bot, username) {
+    function runAggressiveBalanceScanner(bot, username) {
         if (navigationInterval) clearInterval(navigationInterval);
 
         let scannerAttempts = 0;
 
         navigationInterval = setInterval(() => {
-            // Safety Check: Break loop if bot is dead, disconnected, or logging out
-            if (!bot || !bot.inventory || !bot.isReadyToChat) {
+            if (!bot || !bot.isReadyToChat) {
                 if (navigationInterval) clearInterval(navigationInterval);
                 return;
             }
 
             if (bot.currentWindow) return;
 
-            const hotbarItems = bot.inventory.items();
-            const lobbyItemFound = hotbarItems.some(item => 
-                item.name.includes('compass') || 
-                item.name.includes('clock') || 
-                item.name.includes('nether_star') ||
-                item.name.includes('book')
-            );
+            // Probe the server environment using your /bal strategy
+            scannerAttempts++;
+            logCombined(username, `🔍 [Economy Probe] Sending /bal to verify server context... (Probe #${scannerAttempts})`);
+            bot.chat('/bal');
 
-            const heldItem = bot.heldItem;
-            const holdingLobbyItem = heldItem && (
-                heldItem.name.includes('compass') || 
-                heldItem.name.includes('clock') ||
-                heldItem.name.includes('nether_star') ||
-                heldItem.name.includes('book')
-            );
-
-            if (lobbyItemFound || holdingLobbyItem) {
-                scannerAttempts++;
-                isInSurvivalWorld = false;
-
-                logCombined(username, `📥 [Inventory Guard] Lobby item detected! Still in a hub. (Scan #${scannerAttempts})`);
-
-                bot.setQuickBarSlot(CONFIG.hotbarSlot);
-
-                setTimeout(() => {
-                    if (bot.isReadyToChat) {
-                        bot.activateItem(false); 
-                        
-                        if (scannerAttempts % 2 === 0) {
-                            logCombined(username, `⚡ [Aggressive Route] Spamming fallback server commands...`);
-                            bot.chat('/menu');
-                            bot.chat('/selector');
-                            bot.chat('/server survival');
+            // Give the server 1.5 seconds to reply to the /bal command. 
+            // If the flag hasn't been updated by the message event listener, execute lobby bypass sequences.
+            setTimeout(() => {
+                const timeSinceLastBal = Date.now() - lastBalResponseTime;
+                
+                // If it's been more than 3.5 seconds since a valid balance payload was seen, we are definitely stuck in a hub
+                if (timeSinceLastBal > 3500 && !isInSurvivalWorld) {
+                    logCombined(username, `📥 [Economy Guard Failed] No balance info returned. Executing lobby bypass routine...`);
+                    
+                    bot.setQuickBarSlot(CONFIG.hotbarSlot);
+                    setTimeout(() => {
+                        if (bot.isReadyToChat && !isInSurvivalWorld) {
+                            bot.activateItem(false); // Send right-click navigation hotbar packet
+                            
+                            if (scannerAttempts % 2 === 0) {
+                                logCombined(username, `⚡ [Aggressive Route] Spamming fallback transport routes...`);
+                                bot.chat('/menu');
+                                bot.chat('/selector');
+                                bot.chat('/server survival');
+                            }
                         }
-                    }
-                }, 200);
-
-            } else {
-                if (!isInSurvivalWorld && scannerAttempts > 0) {
-                    isInSurvivalWorld = true;
-                    logCombined(username, '⚔️ [Inventory Guard Success] Lobby items cleared from inventory. Survival world verified!');
-                    scannerAttempts = 0;
+                    }, 250);
                 }
-            }
-        }, 4000); 
+            }, 1500);
+
+        }, 4500); // Probes every 4.5 seconds
     }
 
     bot.on('windowOpen', async (window) => {
-        logCombined(username, `📦 [WINDOW OPENED] "${window.title}" - Attempting automatic selector click...`);
-        
+        logCombined(username, `📦 [WINDOW OPENED] "${window.title}" - Clicking destination node...`);
         setTimeout(async () => {
             try {
                 if (bot && bot.isReadyToChat) {
                     await bot.clickWindow(CONFIG.menuTargetSlot, 0, 0);
-                    logCombined(username, '✅ [UI Success] Target slot clicked successfully inside open menu.');
+                    logCombined(username, '✅ [UI Success] Click registered.');
                 }
             } catch (err) {
-                logCombined(username, `❌ [UI Exception] Click failed or window shut down: ${err.message}`);
+                logCombined(username, `❌ [UI Exception] Click dropped: ${err.message}`);
             }
         }, 1200); 
     });
@@ -198,28 +213,11 @@ function createBot(username) {
         if (activeBots[username]) activeBots[username].isReadyToChat = false;
         io.emit('bot-status', { username, status: 'Disconnected' });
         
-        // Initialize retry tracking index if empty
-        if (reconnectAttempts[username] === undefined) reconnectAttempts[username] = 0;
-        
-        // Stop retrying if an IP limit banner was hit
-        if (reconnectAttempts[username] >= 99) {
-            logCombined(username, `🛑 [Connection Terminated] Reconnect disabled due to an IP restriction or ban flag.`);
-            return;
-        }
-
-        reconnectAttempts[username]++;
-        
-        // Smart Reconnect Delay Calculation (Base 15s + 10s extra per consecutive failure)
-        // This stops the server from viewing your bots as a DDOS flood attack.
-        const currentDelay = 15000 + (reconnectAttempts[username] * 10000);
-        const nextDelaySeconds = Math.round(currentDelay / 1000);
-
-        logCombined(username, `🔴 Bot disconnected: [${reason}]. Retrying (Attempt #${reconnectAttempts[username]}) in ${nextDelaySeconds}s...`);
+        logCombined(username, `🔴 Socket Closed [${reason}]. Re-routing back to queue in 30s...`);
         activeBots[username] = null;
 
-        setTimeout(() => {
-            createBot(username);
-        }, currentDelay); 
+        isProcessingQueue = false;
+        enqueueSpawn(username, 30000);
     });
 
     bot.on('error', (err) => {
@@ -229,23 +227,10 @@ function createBot(username) {
     });
 }
 
-function logCombined(username, message) {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[${timestamp}] [${username}] ${message}`);
-    io.emit('chat-message', { time: timestamp, username, message });
-}
-
 io.on('connection', (socket) => {
     socket.emit('sync-bot-list', Object.keys(activeBots));
-    
-    Object.keys(activeBots).forEach(username => {
-        const status = activeBots[username]?.spawned ? 'Online' : 'Connecting';
-        socket.emit('bot-status', { username, status });
-    });
-
     socket.on('send-command', (data) => {
         const { target, command } = data;
-        
         const executeChat = (username) => {
             const currentBot = activeBots[username];
             if (currentBot && currentBot.isReadyToChat && currentBot._client && currentBot._client.socket) {
@@ -255,11 +240,8 @@ io.on('connection', (socket) => {
                 logCombined(username, `❌ [STUCK / FAILED] Command dropped: "${command}" (Reason: Bot offline or loading)`);
             }
         };
-
         if (target === 'all') {
-            Object.keys(activeBots).forEach(username => {
-                executeChat(username);
-            });
+            Object.keys(activeBots).forEach(username => { executeChat(username); });
         } else {
             executeChat(target);
         }
@@ -267,14 +249,10 @@ io.on('connection', (socket) => {
 });
 
 function startApp() {
-    console.log('[System] Initializing application with firewall safety configurations...');
+    console.log('[System] Initializing Economy Probe Spawning Matrix...');
     
-    CONFIG.botNames.forEach((name, i) => {
-        // Increased login gap to a healthy 12 seconds between each bot's connection request
-        setTimeout(() => {
-            reconnectAttempts[name] = 0;
-            createBot(name);
-        }, i * 12000); 
+    CONFIG.botNames.forEach((name) => {
+        enqueueSpawn(name);
     });
 
     server.listen(3000, () => {

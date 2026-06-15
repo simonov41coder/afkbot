@@ -173,7 +173,7 @@ function startBot(username) {
                 if (now - lastRegisterTime > 4000) { 
                     lastRegisterTime = now;
                     sendLog(username, "Match: 'not registered'. Sending /register...", 'system');
-                    bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+                    bot.chat(`/register ${PASSWORD}`);
                     
                     clearTimeout(navTimeout);
                     navTimeout = setTimeout(() => {

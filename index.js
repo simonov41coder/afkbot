@@ -139,21 +139,35 @@ function startBot(username) {
     bots[username] = bot; 
 
     let hasNavigated = false;
-    let isAuthenticated = false;
     let navTimeout;
-    
-    let lastRegisterTime = 0;
-    let lastLoginTime = 0;
 
     function containsIgnoredSymbols(text) {
         return text.includes('❤') || text.includes('★') || text.includes('⛨');
     }
 
     bot.on('spawn', () => {
-        sendLog(username, "Spawned into lobby. Waiting for server instructions...", 'system');
+        sendLog(username, "Spawned into lobby. Initializing staggered auth...", 'system');
         hasNavigated = false;
-        isAuthenticated = false;
         clearTimeout(navTimeout);
+
+        // First step: Drop the registration trigger 2 seconds after spawning
+        setTimeout(() => {
+            sendLog(username, "Sending /register...", 'system');
+            bot.chat(`/register ${PASSWORD}`); 
+
+            // FIXED: Added a distinct 3-second delay before firing /login
+            setTimeout(() => {
+                sendLog(username, "3s delay elapsed. Sending /login...", 'system');
+                bot.chat(`/login ${PASSWORD}`);
+
+                // Queue up the item selector action after the login fires
+                clearTimeout(navTimeout);
+                navTimeout = setTimeout(() => {
+                    if (!hasNavigated) navigateToSurvival(bot);
+                }, 3500);
+            }, 3000);
+
+        }, 2000);
     });
 
     bot.on('message', (jsonMsg) => {
@@ -162,63 +176,27 @@ function startBot(username) {
 
         sendLog(username, message, 'chat');
         const msgLower = message.toLowerCase();
-        const now = Date.now();
 
-        // Isolate the execution context to authentication/system lines only
-        const isAuthPrompt = msgLower.includes('register') || msgLower.includes('login') || msgLower.includes('password') || msgLower.includes('»');
-
-        if (isAuthPrompt && !isAuthenticated) {
-            // YOUR EXACT LOGIC RULE:
-            if (msgLower.includes('not registered')) {
-                if (now - lastRegisterTime > 4000) { 
-                    lastRegisterTime = now;
-                    sendLog(username, "Match: 'not registered'. Sending /register...", 'system');
-                    bot.chat(`/register ${PASSWORD}`);
-                    
-                    clearTimeout(navTimeout);
-                    navTimeout = setTimeout(() => {
-                        if (!hasNavigated) navigateToSurvival(bot);
-                    }, 4000);
-                }
-            } 
-            // ELSE: Just send /login
-            else {
-                if (now - lastLoginTime > 4000) { 
-                    lastLoginTime = now;
-                    sendLog(username, "Match: Anything else auth-related. Sending /login...", 'system');
-                    bot.chat(`/login ${PASSWORD}`);
-                    
-                    clearTimeout(navTimeout);
-                    navTimeout = setTimeout(() => {
-                        if (!hasNavigated) navigateToSurvival(bot);
-                    }, 4000);
-                }
-            }
-        }
-
-        // 2. Catch successful authentication text to speed up menu click
+        // Speed up selector action if successful text confirmation comes early
         if (msgLower.includes('successful') || msgLower.includes('berhasil') || msgLower.includes('logged in') || msgLower.includes('selamat datang')) {
-            sendLog(username, "Auth confirmation detected.", 'system');
-            isAuthenticated = true;
-            
             clearTimeout(navTimeout);
             navTimeout = setTimeout(() => {
                 if (!hasNavigated) navigateToSurvival(bot);
             }, 1000);
         }
 
-        // 3. Teleport Handler
+        // Teleport Requests
         if (message.includes(TARGET_PLAYER) && (msgLower.includes('tpahere') || msgLower.includes('teleport'))) {
             sendLog(username, `Accepting TPA from ${TARGET_PLAYER}`, 'system');
             bot.chat('/tpaccept');
         }
 
-        // 4. Normal environment switch fallback
+        // Hub/Lobby switches
         if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby') || msgLower.includes('useful commands:')) {
             clearTimeout(navTimeout);
             navTimeout = setTimeout(() => {
                 if (!hasNavigated) navigateToSurvival(bot);
-            }, 2000);
+            }, 1500);
         }
     });
 
@@ -241,7 +219,6 @@ function startBot(username) {
     bot.on('end', (reason) => {
         sendLog(username, `Disconnected: ${reason}`, 'system');
         hasNavigated = false;
-        isAuthenticated = false;
         clearTimeout(navTimeout);
         delete bots[username];
         

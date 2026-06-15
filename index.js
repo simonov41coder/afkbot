@@ -6,11 +6,11 @@ const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
-const PASSWORD = 'Aww_Ucuu'; 
+const PASSWORD = 'Aww_Lucuk'; 
 const TARGET_PLAYER = 'ditnshyky';
 const WEB_PORT = 3000;
 
-const accounts = [ 'Chernobyls', 'LitraaAcuu']; // Add an 's' here if your account username is exactly Chernobyls
+const accounts = [ 'Chernobyls', 'LitraaAcuu']; 
 const bots = {}; 
 
 // ------------------------------------------------------------
@@ -139,9 +139,9 @@ function startBot(username) {
     bots[username] = bot; 
 
     let hasNavigated = false;
+    let isAuthenticated = false;
     let navTimeout;
     
-    // Independent rate limiters to stop script loop cross-firing
     let lastRegisterTime = 0;
     let lastLoginTime = 0;
 
@@ -150,19 +150,10 @@ function startBot(username) {
     }
 
     bot.on('spawn', () => {
-        sendLog(username, "Spawned into the lobby.", 'system');
+        sendLog(username, "Spawned into lobby. Waiting for server instructions...", 'system');
         hasNavigated = false;
+        isAuthenticated = false;
         clearTimeout(navTimeout);
-
-        // Actively try to log in 2 seconds after spawning
-        setTimeout(() => {
-            const now = Date.now();
-            if (now - lastLoginTime > 5000) {
-                lastLoginTime = now;
-                sendLog(username, "Sending proactive /login...", 'system');
-                bot.chat(`/login ${PASSWORD}`);
-            }
-        }, 2000);
     });
 
     bot.on('message', (jsonMsg) => {
@@ -173,41 +164,56 @@ function startBot(username) {
         const msgLower = message.toLowerCase();
         const now = Date.now();
 
-        // 1. ISOLATED TARGET: Server explicitly states the account is NOT registered
-        if (msgLower.includes('not registered') || msgLower.includes('silahkan register') || msgLower.includes('mohon register')) {
-            if (now - lastRegisterTime > 5000) { 
-                lastRegisterTime = now;
-                sendLog(username, "Target identified: NOT registered. Executing /register...", 'system');
-                bot.chat(`/register ${PASSWORD}`);
-                
-                clearTimeout(navTimeout);
-                navTimeout = setTimeout(() => {
-                    if (!hasNavigated) navigateToSurvival(bot);
-                }, 3000);
-            }
-        } 
-        
-        // 2. ISOLATED TARGET: Server explicitly states account ALREADY needs login 
-        else if (msgLower.includes('already registered') || msgLower.includes('silahkan login') || msgLower.includes('mohon login') || msgLower.includes('/login <password>')) {
-            if (now - lastLoginTime > 5000) { 
-                lastLoginTime = now;
-                sendLog(username, "Target identified: ALREADY registered. Executing /login...", 'system');
-                bot.chat(`/login ${PASSWORD}`);
-                
-                clearTimeout(navTimeout);
-                navTimeout = setTimeout(() => {
-                    if (!hasNavigated) navigateToSurvival(bot);
-                }, 3000);
+        // Isolate the execution context to authentication/system lines only
+        const isAuthPrompt = msgLower.includes('register') || msgLower.includes('login') || msgLower.includes('password') || msgLower.includes('»');
+
+        if (isAuthPrompt && !isAuthenticated) {
+            // YOUR EXACT LOGIC RULE:
+            if (msgLower.includes('not registered')) {
+                if (now - lastRegisterTime > 4000) { 
+                    lastRegisterTime = now;
+                    sendLog(username, "Match: 'not registered'. Sending /register...", 'system');
+                    bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+                    
+                    clearTimeout(navTimeout);
+                    navTimeout = setTimeout(() => {
+                        if (!hasNavigated) navigateToSurvival(bot);
+                    }, 4000);
+                }
+            } 
+            // ELSE: Just send /login
+            else {
+                if (now - lastLoginTime > 4000) { 
+                    lastLoginTime = now;
+                    sendLog(username, "Match: Anything else auth-related. Sending /login...", 'system');
+                    bot.chat(`/login ${PASSWORD}`);
+                    
+                    clearTimeout(navTimeout);
+                    navTimeout = setTimeout(() => {
+                        if (!hasNavigated) navigateToSurvival(bot);
+                    }, 4000);
+                }
             }
         }
 
-        // 3. Teleport Request Listener
+        // 2. Catch successful authentication text to speed up menu click
+        if (msgLower.includes('successful') || msgLower.includes('berhasil') || msgLower.includes('logged in') || msgLower.includes('selamat datang')) {
+            sendLog(username, "Auth confirmation detected.", 'system');
+            isAuthenticated = true;
+            
+            clearTimeout(navTimeout);
+            navTimeout = setTimeout(() => {
+                if (!hasNavigated) navigateToSurvival(bot);
+            }, 1000);
+        }
+
+        // 3. Teleport Handler
         if (message.includes(TARGET_PLAYER) && (msgLower.includes('tpahere') || msgLower.includes('teleport'))) {
             sendLog(username, `Accepting TPA from ${TARGET_PLAYER}`, 'system');
             bot.chat('/tpaccept');
         }
 
-        // 4. Hub / Success Environment Handler
+        // 4. Normal environment switch fallback
         if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby') || msgLower.includes('useful commands:')) {
             clearTimeout(navTimeout);
             navTimeout = setTimeout(() => {
@@ -235,6 +241,7 @@ function startBot(username) {
     bot.on('end', (reason) => {
         sendLog(username, `Disconnected: ${reason}`, 'system');
         hasNavigated = false;
+        isAuthenticated = false;
         clearTimeout(navTimeout);
         delete bots[username];
         

@@ -6,11 +6,11 @@ const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
-const PASSWORD = 'Ggs_Bro99'; 
+const PASSWORD = 'Aww_Ucuu'; 
 const TARGET_PLAYER = 'ditnshyky';
 const WEB_PORT = 3000;
 
-const accounts = [ 'Chernobyls', 'LitraaAcuu'];
+const accounts = [ 'Chernobyls', 'LitraaAcuu']; // Add an 's' here if your account username is exactly Chernobyls
 const bots = {}; 
 
 // ------------------------------------------------------------
@@ -140,7 +140,10 @@ function startBot(username) {
 
     let hasNavigated = false;
     let navTimeout;
-    let lastAuthTime = 0; // Anti-spam rate limiter timestamp
+    
+    // Independent rate limiters to stop script loop cross-firing
+    let lastRegisterTime = 0;
+    let lastLoginTime = 0;
 
     function containsIgnoredSymbols(text) {
         return text.includes('❤') || text.includes('★') || text.includes('⛨');
@@ -151,60 +154,45 @@ function startBot(username) {
         hasNavigated = false;
         clearTimeout(navTimeout);
 
-        // Send a proactive login command shortly after spawning
+        // Actively try to log in 2 seconds after spawning
         setTimeout(() => {
             const now = Date.now();
-            if (now - lastAuthTime > 4000) {
-                lastAuthTime = now;
+            if (now - lastLoginTime > 5000) {
+                lastLoginTime = now;
                 sendLog(username, "Sending proactive /login...", 'system');
                 bot.chat(`/login ${PASSWORD}`);
-                
-                // Set up navigation attempt right after
-                navTimeout = setTimeout(() => {
-                    if (!hasNavigated) navigateToSurvival(bot);
-                }, 3000);
             }
         }, 2000);
     });
 
     bot.on('message', (jsonMsg) => {
         const message = jsonMsg.toString().trim();
-        
         if (containsIgnoredSymbols(message)) return; 
 
         sendLog(username, message, 'chat');
         const msgLower = message.toLowerCase();
-
-        // --- FIXED AUTHENTICATION LOGIC BLOCK ---
         const now = Date.now();
-        const isCooldownActive = (now - lastAuthTime < 4000); // 4-second protection window
 
-        if (!isCooldownActive) {
-            if (msgLower.includes('already registered')) {
-                lastAuthTime = now;
-                sendLog(username, "Detected 'already registered' message. Correcting with /login...", 'system');
+        // 1. ISOLATED TARGET: Server explicitly states the account is NOT registered
+        if (msgLower.includes('not registered') || msgLower.includes('silahkan register') || msgLower.includes('mohon register')) {
+            if (now - lastRegisterTime > 5000) { 
+                lastRegisterTime = now;
+                sendLog(username, "Target identified: NOT registered. Executing /register...", 'system');
+                bot.chat(`/register ${PASSWORD}`);
+                
+                clearTimeout(navTimeout);
+                navTimeout = setTimeout(() => {
+                    if (!hasNavigated) navigateToSurvival(bot);
+                }, 3000);
+            }
+        } 
+        
+        // 2. ISOLATED TARGET: Server explicitly states account ALREADY needs login 
+        else if (msgLower.includes('already registered') || msgLower.includes('silahkan login') || msgLower.includes('mohon login') || msgLower.includes('/login <password>')) {
+            if (now - lastLoginTime > 5000) { 
+                lastLoginTime = now;
+                sendLog(username, "Target identified: ALREADY registered. Executing /login...", 'system');
                 bot.chat(`/login ${PASSWORD}`);
-                
-                clearTimeout(navTimeout);
-                navTimeout = setTimeout(() => {
-                    if (!hasNavigated) navigateToSurvival(bot);
-                }, 3000);
-
-            } else if (msgLower.includes('not registered') || msgLower.includes('silahkan register')) {
-                lastAuthTime = now;
-                sendLog(username, "Detected 'not registered' message. Sending /register...", 'system');
-                bot.chat(`/register ${PASSWORD}`);
-                
-                clearTimeout(navTimeout);
-                navTimeout = setTimeout(() => {
-                    if (!hasNavigated) navigateToSurvival(bot);
-                }, 3000);
-
-            } else if (msgLower.includes('/register') && !msgLower.includes('already') && !msgLower.includes('sending')) {
-                // Generic fallback for registration prompts
-                lastAuthTime = now;
-                sendLog(username, "Generic register prompt noticed. Sending /register...", 'system');
-                bot.chat(`/register ${PASSWORD}`);
                 
                 clearTimeout(navTimeout);
                 navTimeout = setTimeout(() => {
@@ -213,15 +201,14 @@ function startBot(username) {
             }
         }
 
-        // TPA Request Handling
+        // 3. Teleport Request Listener
         if (message.includes(TARGET_PLAYER) && (msgLower.includes('tpahere') || msgLower.includes('teleport'))) {
             sendLog(username, `Accepting TPA from ${TARGET_PLAYER}`, 'system');
             bot.chat('/tpaccept');
         }
 
-        // Hub fallback handler
+        // 4. Hub / Success Environment Handler
         if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby') || msgLower.includes('useful commands:')) {
-            // Once we see the help commands or hub text, we are authenticated! Run navigation.
             clearTimeout(navTimeout);
             navTimeout = setTimeout(() => {
                 if (!hasNavigated) navigateToSurvival(bot);
@@ -234,7 +221,6 @@ function startBot(username) {
         if (containsIgnoredSymbols(message)) return; 
     });
 
-    // GUI Menu Interaction Handler
     bot.on('windowOpen', async (window) => {
         sendLog(username, `Server Menu opened. Clicking slot 12...`, 'system');
         try {

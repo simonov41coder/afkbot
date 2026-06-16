@@ -191,6 +191,15 @@ function startBot(username) {
             bot.chat('/tpaccept');
         }
 
+        if (msgLower.includes('moved')) {
+            sendLog(username, "Server move detected. Retrying navigation in 3s...", 'system');
+            hasNavigated = false; // Reset state so it can trigger again
+            clearTimeout(navTimeout);
+            navTimeout = setTimeout(() => {
+                if (!hasNavigated) navigateToSurvival(bot);
+            }, 3000);
+        }
+
         // Hub/Lobby switches
         if (msgLower.includes('welcome to the hub') || msgLower.includes('lobby') || msgLower.includes('useful commands:')) {
             clearTimeout(navTimeout);

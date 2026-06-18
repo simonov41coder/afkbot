@@ -6,11 +6,11 @@ const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
-const PASSWORD = 'YourSecurePassword123';
+const PASSWORD = 'Aww_lucuk';
 const TARGET_PLAYER = 'ditnshyky';
 const WEB_PORT = 3000;
 
-const accounts = ['Natan26', 'Chernobyls', 'ElReno13', 'LitraaAcuu'];
+const accounts = ['Chernobyls', 'LitraaAcuu'];
 const bots = {};
 
 // ------------------------------------------------------------

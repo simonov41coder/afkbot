@@ -6,6 +6,7 @@ const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
+const SERVER_VERSION = '1.20.1';
 const PASSWORD = 'Aww_Lucuk';
 const WEB_PORT = 3000;
 
@@ -112,15 +113,18 @@ function startBot(username) {
         host: SERVER_HOST,
         username: username,
         auth: 'offline',
-        version: '1.20.1'
+        version: SERVER_VERSION
     });
 
     bots[username] = bot;
 
     let hasNavigated = false;
+    let inSurvival = false;
+    let lastActionBarTime = 0;
     let navTimeout = null;
     let authInterval = null;
     let authDone = false;
+    let presenceCheckInterval = null;
 
     function scheduleNav(delay) {
         clearTimeout(navTimeout);
@@ -141,7 +145,7 @@ function startBot(username) {
     }
 
     async function navigateToSurvival() {
-        if (hasNavigated) return;
+        if (hasNavigated || inSurvival) return;
 
         try {
             emitLog(`[${username}] Navigating to survival...`);
@@ -159,8 +163,9 @@ function startBot(username) {
 
             await sleep(500);
             await bot.clickWindow(12, 0, 0); // Adjust slot to match your server's GUI
-            hasNavigated = true;
-            emitLog(`[${username}] Successfully navigated to survival.`);
+            emitLog(`[${username}] Clicked survival GUI option, awaiting confirmation...`);
+            // hasNavigated/inSurvival now get confirmed by the actionbar presence check,
+            // not assumed here
 
         } catch (e) {
             emitLog(`[${username}] Nav error: ${e.message}`);
@@ -168,23 +173,48 @@ function startBot(username) {
         }
     }
 
+    function startPresenceCheck() {
+        clearInterval(presenceCheckInterval);
+        presenceCheckInterval = setInterval(() => {
+            const elapsed = Date.now() - lastActionBarTime;
+            if (elapsed > 10000) {
+                if (inSurvival) {
+                    emitLog(`[${username}] Lost survival HUD signal. Assuming hub — retrying nav.`);
+                }
+                inSurvival = false;
+                hasNavigated = false;
+                scheduleNav(2000);
+            }
+        }, 5000);
+    }
+
     bot.on('spawn', () => {
         emitLog(`[${username}] Spawned.`);
-        hasNavigated = false;
 
         if (authInterval) clearInterval(authInterval);
         authDone = false;
         authBurst();
         authInterval = setInterval(authBurst, 15 * 60 * 1000);
 
+        startPresenceCheck();
         scheduleNav(8000);
     });
 
     bot.on('message', (jsonMsg) => {
         const raw = jsonMsg.toString();
 
-        // Skip the HP/SP/Armor HUD spam (e.g. "❤ 20/20 ★ 20/20 ⛨ 7")
-        if (/❤.*★.*⛨/.test(raw)) return;
+        // Actionbar HUD (e.g. "❤ 20/20 ★ 20/20 ⛨ 7") only shows in survival —
+        // use it as the source of truth for "are we actually in survival"
+        if (/❤.*★.*⛨/.test(raw)) {
+            lastActionBarTime = Date.now();
+            if (!inSurvival) {
+                inSurvival = true;
+                hasNavigated = true;
+                clearTimeout(navTimeout);
+                emitLog(`[${username}] Confirmed in survival (actionbar detected).`);
+            }
+            return;
+        }
 
         const msg = raw.toLowerCase();
         emitLog(`[${username}] Chat: ${raw}`);
@@ -193,15 +223,8 @@ function startBot(username) {
             emitLog(`[${username}] ⚠ AUTH FAILURE: ${raw}`);
         }
 
-        if (msg.includes('moved')) {
-            emitLog(`[${username}] Server move detected. Re-navigating in 3s...`);
-            hasNavigated = false;
-            scheduleNav(3000);
-        }
-
         if (msg.includes('successful') || msg.includes('logged in')) {
             authDone = true;
-            scheduleNav(1000);
         }
     });
 
@@ -213,9 +236,14 @@ function startBot(username) {
         emitLog(`[${username}] Connection ended: ${reason}`);
     });
 
+    bot._client.on('error', (err) => {
+        emitLog(`[${username}] Protocol error: ${err.message}`);
+    });
+
     bot.on('end', () => {
         emitLog(`[${username}] Disconnected. Reconnecting in 10s...`);
         clearInterval(authInterval);
+        clearInterval(presenceCheckInterval);
         clearTimeout(navTimeout);
         delete bots[username];
         setTimeout(() => startBot(username), 10000);

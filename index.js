@@ -9,7 +9,7 @@ const SERVER_HOST = 'play.minegens.id';
 const PASSWORD = 'Aww_Lucuk';
 const WEB_PORT = 3000;
 
-const accounts = ['Chernobyls', 'LitraaAcuu'];
+const accounts = ['Chernobyls', 'Litra_Acuu'];
 const bots = {};
 
 // ------------------------------------------------------------
@@ -180,8 +180,17 @@ function startBot(username) {
     });
 
     bot.on('message', (jsonMsg) => {
-        const msg = jsonMsg.toString().toLowerCase();
-        emitLog(`[${username}] Chat: ${jsonMsg.toString()}`);
+        const raw = jsonMsg.toString();
+
+        // Skip the HP/SP/Armor HUD spam (e.g. "❤ 20/20 ★ 20/20 ⛨ 7")
+        if (/❤.*★.*⛨/.test(raw)) return;
+
+        const msg = raw.toLowerCase();
+        emitLog(`[${username}] Chat: ${raw}`);
+
+        if (msg.includes('already logged in') || msg.includes('wrong password') || msg.includes('invalid password')) {
+            emitLog(`[${username}] ⚠ AUTH FAILURE: ${raw}`);
+        }
 
         if (msg.includes('moved')) {
             emitLog(`[${username}] Server move detected. Re-navigating in 3s...`);
@@ -195,8 +204,12 @@ function startBot(username) {
         }
     });
 
-    bot.on('windowOpen', async (window) => {
-        // Handled inside navigateToSurvival via waitForWindow
+    bot.on('kicked', (reason) => {
+        emitLog(`[${username}] KICKED: ${reason}`);
+    });
+
+    bot._client.on('end', (reason) => {
+        emitLog(`[${username}] Connection ended: ${reason}`);
     });
 
     bot.on('end', () => {
@@ -211,3 +224,4 @@ function startBot(username) {
         emitLog(`[${username}] Error: ${err.message}`);
     });
 }
+

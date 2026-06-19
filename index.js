@@ -112,6 +112,7 @@ function startBot(username) {
         host: SERVER_HOST,
         username: username,
         auth: 'offline'
+        version: '1.20.1'
     });
 
     bots[username] = bot;

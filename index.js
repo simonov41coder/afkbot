@@ -164,8 +164,6 @@ function startBot(username) {
             await sleep(500);
             await bot.clickWindow(12, 0, 0); // Adjust slot to match your server's GUI
             emitLog(`[${username}] Clicked survival GUI option, awaiting confirmation...`);
-            // hasNavigated/inSurvival now get confirmed by the actionbar presence check,
-            // not assumed here
 
         } catch (e) {
             emitLog(`[${username}] Nav error: ${e.message}`);
@@ -203,8 +201,6 @@ function startBot(username) {
     bot.on('message', (jsonMsg) => {
         const raw = jsonMsg.toString();
 
-        // Actionbar HUD (e.g. "❤ 20/20 ★ 20/20 ⛨ 7") only shows in survival —
-        // use it as the source of truth for "are we actually in survival"
         if (/❤.*★.*⛨/.test(raw)) {
             lastActionBarTime = Date.now();
             if (!inSurvival) {
@@ -218,6 +214,14 @@ function startBot(username) {
 
         const msg = raw.toLowerCase();
         emitLog(`[${username}] Chat: ${raw}`);
+
+        // --- AUTO TPA SYSTEM ---
+        // Checks if the message contains your name and a variation of teleport request wording
+        if (msg.includes('ditnshyky') && (msg.includes('tpahere') || msg.includes('teleport') || msg.includes('request'))) {
+            emitLog(`[${username}] Detected TPA request from ditnshyky. Accepting...`);
+            bot.chat('/tpaccept ditnshyky');
+        }
+        // -----------------------
 
         if (msg.includes('already logged in') || msg.includes('wrong password') || msg.includes('invalid password')) {
             emitLog(`[${username}] ⚠ AUTH FAILURE: ${raw}`);

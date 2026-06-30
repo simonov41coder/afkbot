@@ -10,7 +10,7 @@ const SERVER_VERSION = '1.20.1';
 const PASSWORD = 'Aww_Lucuk';
 const WEB_PORT = 3000;
 
-const accounts = ['Chernobyls', 'Litra_Acuu', 'ThisPlayerSponsored'];
+const accounts = ['Chernobyls', 'Litra_Acuu', 'Sponsored_one'];
 const bots = {};
 
 // ------------------------------------------------------------

@@ -1,14 +1,9 @@
 const mineflayer = require('mineflayer');
-const express = require('express');
-const app = express();
-const http = require('http').createServer(app);
-const io = require('socket.io')(http);
 
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
 const SERVER_VERSION = '1.20.1';
 const PASSWORD = 'Aww_Lucuk';
-const WEB_PORT = 3000;
 
 const accounts = ['Chernobyls', 'Litra_Acuu', 'Sponsored_one'];
 const bots = {};
@@ -37,68 +32,9 @@ function waitForWindow(bot, timeout = 5000) {
     });
 }
 
-// ------------------------------------------------------------
-// Web Dashboard
-// ------------------------------------------------------------
-
-app.get('/', (req, res) => {
-    res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Mineflayer Bot Dashboard</title>
-        <script src="/socket.io/socket.io.js"></script>
-        <style>
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #1e1e24; color: #fff; margin: 20px; }
-            #console { background: #111; height: 400px; overflow-y: scroll; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 13px; }
-            .msg { margin-bottom: 5px; border-left: 3px solid #555; padding-left: 8px; }
-            input, select, button { margin-top: 10px; padding: 6px 10px; border-radius: 4px; border: none; }
-            button { background: #4e9af1; color: #fff; cursor: pointer; }
-        </style>
-    </head>
-    <body>
-        <h1>Bot Network Dashboard</h1>
-        <div id="console"></div>
-        <select id="botSelect">
-            <option value="all">All Bots</option>
-            ${accounts.map(a => `<option value="${a}">${a}</option>`).join('')}
-        </select>
-        <input id="chatInput" type="text" placeholder="Message..." />
-        <button onclick="sendChat()">Send</button>
-        <script>
-            const socket = io();
-            socket.on('log', ({ msg }) => {
-                const div = document.getElementById('console');
-                const line = document.createElement('div');
-                line.className = 'msg';
-                line.textContent = msg;
-                div.appendChild(line);
-                div.scrollTop = div.scrollHeight;
-            });
-            function sendChat() {
-                const botName = document.getElementById('botSelect').value;
-                const message = document.getElementById('chatInput').value;
-                if (message.trim()) socket.emit('send-chat', { botName, message });
-            }
-        </script>
-    </body>
-    </html>
-    `);
-});
-
-io.on('connection', (socket) => {
-    socket.on('send-chat', ({ botName, message }) => {
-        if (botName === 'all') Object.values(bots).forEach(b => b?.chat(message));
-        else if (bots[botName]) bots[botName].chat(message);
-    });
-});
-
 function emitLog(msg) {
     console.log(msg);
-    io.emit('log', { msg });
 }
-
-http.listen(WEB_PORT, () => emitLog(`> Web Dashboard: http://localhost:${WEB_PORT}`));
 
 // ------------------------------------------------------------
 // Bot Logic
@@ -113,7 +49,8 @@ function startBot(username) {
         host: SERVER_HOST,
         username: username,
         auth: 'offline',
-        version: SERVER_VERSION
+        version: SERVER_VERSION,
+        viewDistance: 'tiny' // Optimization: Drastically lowers incoming network chunk data
     });
 
     bots[username] = bot;
@@ -134,11 +71,13 @@ function startBot(username) {
     }
 
     function authBurst() {
-        if (!authDone) {
-            emitLog(`[${username}] Registering...`);
-            bot.chat(`/register ${PASSWORD}`);
-        }
+        if (authDone) return; // Optimization: Stop spamming packets if authenticated
+
+        emitLog(`[${username}] Registering...`);
+        bot.chat(`/register ${PASSWORD}`);
+        
         setTimeout(() => {
+            if (authDone) return;
             emitLog(`[${username}] Logging in...`);
             bot.chat(`/login ${PASSWORD}`);
         }, 3000);
@@ -162,7 +101,7 @@ function startBot(username) {
             }
 
             await sleep(500);
-            await bot.clickWindow(12, 0, 0); // Adjust slot to match your server's GUI
+            await bot.clickWindow(12, 0, 0); 
             emitLog(`[${username}] Clicked survival GUI option, awaiting confirmation...`);
 
         } catch (e) {
@@ -187,6 +126,9 @@ function startBot(username) {
     }
 
     bot.on('spawn', () => {
+        // Optimization: Disable physics engine processing since the bots are stationary.
+        bot.physicsEnabled = false; 
+
         emitLog(`[${username}] Spawned.`);
 
         if (authInterval) clearInterval(authInterval);
@@ -216,7 +158,6 @@ function startBot(username) {
         emitLog(`[${username}] Chat: ${raw}`);
 
         // --- AUTO TPA SYSTEM ---
-        // Checks if the message contains your name and a variation of teleport request wording
         if (msg.includes('ditnshyky') && (msg.includes('tpahere') || msg.includes('teleport') || msg.includes('request'))) {
             emitLog(`[${username}] Detected TPA request from ditnshyky. Accepting...`);
             bot.chat('/tpaccept ditnshyky');
@@ -229,6 +170,10 @@ function startBot(username) {
 
         if (msg.includes('successful') || msg.includes('logged in')) {
             authDone = true;
+            if (authInterval) {
+                clearInterval(authInterval);
+                authInterval = null; // Optimization: Kill loop interval completely on success
+            }
         }
     });
 
@@ -246,7 +191,7 @@ function startBot(username) {
 
     bot.on('end', () => {
         emitLog(`[${username}] Disconnected. Reconnecting in 10s...`);
-        clearInterval(authInterval);
+        if (authInterval) clearInterval(authInterval);
         clearInterval(presenceCheckInterval);
         clearTimeout(navTimeout);
         delete bots[username];

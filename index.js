@@ -1,3 +1,16 @@
+// Add this at the top of your script for a one-time check
+const https = require('https');
+https.get('https://ipinfo.io/json', (res) => {
+  let data = '';
+  res.on('data', chunk => data += chunk);
+  res.on('end', () => {
+    const info = JSON.parse(data);
+    console.log(`[IP CHECK] ${info.ip} | ${info.org} | ${info.country}`);
+  });
+});
+
+
+
 const mineflayer = require('mineflayer');
 
 // Configuration

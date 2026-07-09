@@ -3,16 +3,17 @@ const mineflayer = require('mineflayer');
 // Configuration
 const SERVER_HOST = 'play.minegens.id';
 const SERVER_VERSION = '1.20.1';
-const PASSWORD = 'Aww_Lucuk';
+const PASSWORD = 'IceTruckKlr';
 
-const accounts = ['Chernobyls', 'Litra_Acuu', 'Sponsored_one'];
+const accounts = ['_nothing_', 'MessyLife', 'definetly_player'];
 const bots = {};
 
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
 function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  // Add up to 800ms of jitter so no two delays are identical
+  return new Promise(resolve => setTimeout(resolve, ms + Math.random() * 800));
 }
 
 function waitForWindow(bot, timeout = 5000) {
@@ -40,7 +41,9 @@ const ACTIONBAR_RE = /❤.*★.*⛨/;
 // Bot Logic
 // ------------------------------------------------------------
 accounts.forEach((username, index) => {
-  setTimeout(() => startBot(username), index * 5000);
+  // Stagger joins 15–30s apart to avoid IP-cluster detection
+  const stagger = 15000 + Math.random() * 15000;
+  setTimeout(() => startBot(username), index * stagger);
 });
 
 function startBot(username) {
@@ -49,11 +52,10 @@ function startBot(username) {
     username: username,
     auth: 'offline',
     version: SERVER_VERSION,
-    viewDistance: 'tiny', // Optimization: minimizes incoming chunk data
-    hideErrors: true,     // Optimization: skip internal warning string building
-    plugins: {            // Optimization: skip loading unused plugins — test live, re-enable any that throw on inject
-      physics: false,     // bots never move, so drop the tick loop entirely
-      blocks: false,
+    viewDistance: 'tiny',
+    hideErrors: true,
+    plugins: {
+      // KEEP physics and blocks ON — a "dead" client is the #1 bot signature
       digging: false,
       place_block: false,
       place_entity: false,
@@ -100,20 +102,51 @@ function startBot(username) {
 
   function scheduleNav(delay) {
     clearTimeout(navTimeout);
+    const jittered = delay + Math.random() * 2000;
     navTimeout = setTimeout(() => {
       if (!hasNavigated) navigateToSurvival();
-    }, delay);
+    }, jittered);
   }
 
   function authBurst() {
     if (authDone) return;
     emitLog(`[${username}] Registering...`);
     bot.chat(`/register ${PASSWORD}`);
+
+    const jitteredDelay = 3000 + Math.random() * 2000;
     setTimeout(() => {
       if (authDone) return;
       emitLog(`[${username}] Logging in...`);
       bot.chat(`/login ${PASSWORD}`);
-    }, 3000);
+    }, jitteredDelay);
+  }
+
+  function startAntiBotEvasionLoops() {
+    // Random head twitch (recursive setTimeout so interval is always random)
+    function lookLoop() {
+      if (!bot.entity) {
+        bot.once('spawn', lookLoop);
+        return;
+      }
+      const yawJitter = (Math.random() - 0.5) * 0.12;
+      const pitchJitter = (Math.random() - 0.5) * 0.06;
+      bot.look(bot.entity.yaw + yawJitter, bot.entity.pitch + pitchJitter, true);
+      setTimeout(lookLoop, 20000 + Math.random() * 60000);
+    }
+    lookLoop();
+
+    // Random sneak toggle
+    function sneakLoop() {
+      if (!bot.entity) {
+        bot.once('spawn', sneakLoop);
+        return;
+      }
+      bot.setControlState('sneak', true);
+      const duration = 300 + Math.random() * 700;
+      setTimeout(() => bot.setControlState('sneak', false), duration);
+      setTimeout(sneakLoop, 120000 + Math.random() * 180000);
+    }
+    sneakLoop();
   }
 
   async function navigateToSurvival() {
@@ -121,7 +154,7 @@ function startBot(username) {
     try {
       emitLog(`[${username}] Navigating to survival...`);
       bot.setQuickBarSlot(0);
-      await sleep(500);
+      await sleep(600);
       bot.activateItem(false);
 
       const window = await waitForWindow(bot, 5000);
@@ -131,7 +164,7 @@ function startBot(username) {
         return;
       }
 
-      await sleep(500);
+      await sleep(700);
       await bot.clickWindow(12, 0, 0);
       emitLog(`[${username}] Clicked survival GUI option, awaiting confirmation...`);
     } catch (e) {
@@ -142,7 +175,6 @@ function startBot(username) {
 
   function startPresenceCheck() {
     clearInterval(presenceCheckInterval);
-    // Optimization: 10s tick instead of 5s halves wakeups across all bots
     presenceCheckInterval = setInterval(() => {
       const elapsed = Date.now() - lastActionBarTime;
       if (elapsed > 10000) {
@@ -156,6 +188,11 @@ function startBot(username) {
     }, 10000);
   }
 
+  bot.on('login', () => {
+    emitLog(`[${username}] Login packet received.`);
+    // Physics is now active, so position packets are already flowing.
+  });
+
   bot.on('spawn', () => {
     emitLog(`[${username}] Spawned.`);
 
@@ -165,6 +202,7 @@ function startBot(username) {
     authInterval = setInterval(authBurst, 15 * 60 * 1000);
 
     startPresenceCheck();
+    startAntiBotEvasionLoops();
     scheduleNav(8000);
   });
 
@@ -187,7 +225,10 @@ function startBot(username) {
     // --- AUTO TPA SYSTEM ---
     if (msg.includes('ditnshyky') && (msg.includes('tpahere') || msg.includes('teleport') || msg.includes('request'))) {
       emitLog(`[${username}] Detected TPA request from ditnshyky. Accepting...`);
-      bot.chat('/tpaccept ditnshyky');
+      // Human-like reaction delay
+      setTimeout(() => {
+        bot.chat('/tpaccept ditnshyky');
+      }, 1200 + Math.random() * 2500);
       return;
     }
 
@@ -204,8 +245,6 @@ function startBot(username) {
       }
       return;
     }
-
-    // Optimization: no more catch-all chat logging — dropped high-volume console.log per line
   });
 
   bot.on('kicked', (reason) => {

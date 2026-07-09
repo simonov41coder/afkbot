@@ -5,7 +5,7 @@ const SERVER_HOST = 'play.minegens.id';
 const SERVER_VERSION = '1.20.1';
 const PASSWORD = 'IceTruckKlr';
 
-const accounts = ['_nothing_', 'MessyLife', 'definetly_player'];
+const accounts = ['JustLife44', 'errty'];
 const bots = {};
 
 // ------------------------------------------------------------
@@ -53,41 +53,7 @@ function startBot(username) {
     auth: 'offline',
     version: SERVER_VERSION,
     viewDistance: 'tiny',
-    hideErrors: true,
-    plugins: {
-      // KEEP physics and blocks ON — a "dead" client is the #1 bot signature
-      digging: false,
-      place_block: false,
-      place_entity: false,
-      generic_place: false,
-      craft: false,
-      furnace: false,
-      chest: false,
-      anvil: false,
-      enchantment_table: false,
-      villager: false,
-      book: false,
-      bed: false,
-      breath: false,
-      experience: false,
-      explosion: false,
-      fishing: false,
-      ray_trace: false,
-      resource_pack: false,
-      scoreboard: false,
-      spawn_point: false,
-      tablist: false,
-      team: false,
-      time: false,
-      title: false,
-      boss_bar: false,
-      particle: false,
-      rain: false,
-      sound: false,
-      block_actions: false,
-      command_block: false,
-      creative: false
-    }
+    hideErrors: false,
   });
 
   bots[username] = bot;
